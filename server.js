@@ -871,11 +871,7 @@ var server = app.listen(port, (err) => {
   }
 
   splash +=
-  `\n  Explore SPX Graphics related resources:` +  
-  `\n  + Homepage ................ https://spxgraphics.com` +  
-  `\n  + Knowledge Base .......... https://docs.spxgraphics.com` +  
-  `\n  + SPX in the Cloud ........ https://spxcloud.app` + 
-  `\n  + SPX Graphics for Zoom ... https://spxzoom.com` +
+  `\n  + Knowledge Base .......... https://docs.spxgraphics.com` +
   `\n` +
   `\n  This is SPX Solo. For professional features and support\n  options see SPX Production and SPX Broadcast.`;
 

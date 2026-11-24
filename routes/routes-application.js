@@ -21,7 +21,6 @@ const { JSDOM } = jsdom;
 const cors = require('cors');
 const { timeStamp } = require("console");
 const http = require('http');
-const axios = require('axios');
 
 // ROOT ROUTES ----------------------------------------------------------------------------------------------
 
@@ -244,64 +243,6 @@ router.post('/config', spxAuth.CheckLogin, async (req, res) => {
 
 
 }); // post /config end
-
-router.get('/register', cors(), spxAuth.CheckLogin, async (req, res) => {
-	// show application config (send global.config as "config" data to the view, see options object below)
-	await SaveRundownDataToDisc(); // Added in 1.0.15
-	let recents = config.general.recents || [] // added in 1.1.0
-	let disableConfigUI = config.general.disableConfigUI || false // added in 1.1.1
-	res.render('view-registration', {
-		layout: false,
-		config: config,
-		user: req.session.user,
-		configfile: configfileref,
-	});
-}); // get /register end
-
-router.post('/register', async (req, res) => {
-	// Handles modification changes of registratiom.
-	// Request: form data as JSON
-	// Returns: Ajax response
-	logger.verbose('Saving registration [' + + '] in rundown [' + req.body.rundownfile + '] with updated values.');
-	try {
-
-		if (!config.registration) {
-			config.registration = {};
-		}
-
-		config.registration.updated = new Date().toISOString();
-		config.registration.country = req.body.country;
-		config.registration.indus = req.body.indus;
-		config.registration.usage = req.body.usage
-		config.registration.devlevel = req.body.skill
-		config.registration.freetext = req.body.freetext
-		config.registration.email = req.body.email
-		if (req.body.inviteDiscord == "on") {
-			config.registration.discord = true
-		} else {
-			config.registration.discord = false
-		}
-		if (req.body.newsletter == "on") {
-			config.registration.newsletter = true
-		} else {
-			config.registration.newsletter = false
-		}
-		await spx.writeFile(global.configfileref, config);
-
-		config.registration.platform = req.body.platform;
-		config.registration.task = req.body.task;
-
-		await axios.post('https://spx-formbot-1093142801465.us-central1.run.app/api/submit', config.registration);
-		req.session.showMessage = 'Thank you for the registration! 👍';
-		res.redirect('/');
-
-	} catch (error) {
-		console.error('ERROR', error);
-		let errmsg = 'Server error in /register [' + error + ']';
-		logger.error(errmsg);
-		res.status(500).send(errmsg)  // error 500 AJAX RESPONSE
-	};
-}); // post /register end
 
 router.get('/shows', cors(), spxAuth.CheckLogin, async (req, res) => {
 	// show list of shows (folders)

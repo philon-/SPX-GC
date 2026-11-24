@@ -153,37 +153,6 @@ router.post('/browseFiles/', async (req, res) => {
 }); // POST browseFiles API route ended
 
 
-router.post('/heartbeat/', async (req, res) => {
-  // REQUEST: data = a heartbeat string
-  // RETURNS: none
-  // 1.1.0 submit anonymous usage stats
-  try {
-
-    if (global.config.general.allowstats===false || global.config.general.allowstats=='false') {
-      logger.verbose('Heartbeat / stats disabled.');
-      return
-    } // Stats disabled by config. Added in 1.1.1.
-
-    let d = req.body.data;
-    let h = 'smartpx.fi';
-    spx.collectSPXInfo('hello from api/heartbeat endpoint')
-    .then(function(si) {
-      let u = 'http://' + h  + '/gc/messageservice2/?'+ si + '&d=' + d;
-      spx.httpGet(u);
-      return si
-    })
-    .then(function(si) {
-      logger.verbose('Stats ' + si + ' AND ' + d);
-      res.status(200).send('{all:good}'); // ok 200 AJAX RESPONSE
-      return;
-    })
-  } catch (error) {
-    logger.error('Error in api/heartbeat: ' + error);
-    res.status(500).send(error);
-  };
-  
-}); // POST heartbeat 
-
 
 router.post('/readExcelData', async (req, res) => {
   // Function can be called from a template to get all data from 

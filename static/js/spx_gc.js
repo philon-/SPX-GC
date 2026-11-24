@@ -977,51 +977,6 @@ function copyText(txt) {
     temp.parentNode.removeChild(temp);
 } // copyText ended
 
-function heartbeat(dd, getOnly = false) { // 36 24 36 hey
-    // see notes TDT=00d86114 (/..es2/heartbeat)
-    let nw, st, key, val, dif; 
-    let fD = '|';
-    let vD = ':';
-    let eK = 'TS'
-    let ls = 'SPXGC_UI_stats';
-    let or = localStorage.getItem(ls) || eK + vD + "0" + fD + dd + vD + "0";
-
-    if (getOnly) { return or; }
-
-    let ar = or.split(fD);
-    let ok = false; 
-    let rp = false;
-    ar.every(function(f,idx) {
-        key = f.split(vD)[0]; val = f.split(vD)[1];
-        if (key==eK) {
-            dif = Math.round((Date.now()-val)/(1000*60*60*24));
-            if (Math.round((Date.now()-val)/(1000*60*60*24))>0) { rp = true; };
-            // ###################
-            // rp = true; // debug
-            // ###################
-            ar[idx]=eK + vD + Date.now();
-        }
-        if (key==dd) {
-            nw = parseInt(val)+1;
-            ar[idx]=key + vD + nw;
-            ok = true; return false
-        } else {
-            ok = false; return true
-        }
-    });
-    if ( !ok ) { ar.push(dd + vD + '1'); }
-    st = ar.join(fD);
-    if (rp) {
-        // FIXME:
-        // console.log('Submit ' + or)
-        getMessages2(or)
-        st = eK + vD + Date.now() + fD + dd + vD + 1;
-    } else {
-        // FIXME:
-        // console.log('Resume ' + st)
-    }
-    localStorage.setItem(ls, st)
-} // dirty deeds done. 
 
 function del() {
     // Episodes -view
@@ -1370,101 +1325,6 @@ function getLayerFromProfile(buttonName) {
     }
 } // getLayerFromProfile ended
 
-function getMessages(curVerInfo) {
-    // Poll server for upgrade info. ------------------------------
-    // Requires CORS in the route.
-    // Moved from view-home.
-    //
-    // PLEASE NOTE: This will be replaced with improved mechanism
-    //              which will report usage stats also and will
-    //              notify user with a small icon to reveal the
-    //              promo within controller UI. 
-    //              This will happen in 1.1.x.
-    //
-    //              All passed data is anonymous and non-identifiable
-    // -------------------------------------------------------------
-
-    
-    let versionStr = curVerInfo.split('v=')[1].split('&')[0].trim();
-    // console.log('---------- getMessages [' + versionStr + ']', curVerInfo);
-
-    localStorage.removeItem('SPX-GC-NewVersion');
-    document.getElementById('upgradeinfo').style.display="none";
-    document.getElementById('messageinfo').style.display="none";
-    var url = (`https://www.smartpx.fi/gc/messageservice/?` + curVerInfo );
-    fetch(url)
-    .then((res) => res.json())
-    .then((messages) => {
-      let currntVer = document.getElementById('footerVerDisplay').innerText;
-      let latestVer = messages.latest.vers;
-      let dbggreet  = messages.dbggreet || "";
-
-      // this has been broken until 1.0.11
-      let debugNotifications = false;
-      if ( document.getElementById('greeting') && document.getElementById('greeting').innerText!='' ) {
-        if ( dbggreet == document.getElementById('greeting').innerText ) {
-          // if config.greeting == message.greeting then debug it!
-          debugNotifications = true;
-        }
-      }
-      
-      if (messages.latest.vers && versInt(latestVer) > versInt(currntVer) || debugNotifications ) {
-        // Yes, there is new version available
-        localStorage.setItem('SPX-GC-NewVersion',latestVer);
-        document.getElementById('upgradeinfo').style.display="block";
-        document.getElementById('upgrade_date').innerText=messages.latest.date;
-        document.getElementById('upgrade_head').innerText=messages.latest.head;
-        document.getElementById('upgrade_body').innerText=messages.latest.body;
-        document.getElementById('upgrade_call').innerText=messages.latest.call;
-        document.getElementById('upgrade_link').href=messages.latest.href;
-        document.getElementById('upgrade_link').innerText=messages.latest.link;
-      }
-      
-      if (messages.notification.type && messages.notification.type!="none" || debugNotifications ){
-        // Yes, there is something else to announce
-        document.getElementById('messageinfo').style.display="block";
-        document.getElementById('messageinfo').classList="message-" + messages.notification.type;
-        document.getElementById('messagelink').classList="message-" + messages.notification.type;
-        document.getElementById('message_date').innerText=messages.notification.date;
-        document.getElementById('message_head').innerText=messages.notification.head;
-        document.getElementById('message_body').innerText=messages.notification.body;
-        document.getElementById('message_call').innerText=messages.notification.call;
-        document.getElementById('message_link').href=messages.notification.href;
-        document.getElementById('message_link').innerText=messages.notification.link;
-      }
-
-      return // Check if there is a promo for this version
-
-      // Added in 1.1.2
-      // versionStr = "1.0.0"; // DEBUG## with specific version number
-      if (messages.homepagepromo[versionStr] ) {
-        // console.log('Promo available for v.' + versionStr, messages.homepagepromo[versionStr]);
-        document.getElementById('homepagepromolink').href=messages.homepagepromo[versionStr].link;
-        document.getElementById('homepagepromopict').src=messages.homepagepromo[versionStr].pict;
-        document.getElementById('homepagepromopict').title=messages.homepagepromo[versionStr].titl;
-      } else {
-        // Check if there is a default promo
-        if (messages.homepagepromo && messages.homepagepromo.default && messages.homepagepromo.default.active ){
-            // console.log('Using active default promo.', messages.homepagepromo.default);
-            document.getElementById('homepagepromolink').href=messages.homepagepromo.default.link;
-            document.getElementById('homepagepromopict').src=messages.homepagepromo.default.pict;
-            document.getElementById('homepagepromopict').title=messages.homepagepromo.default.titl;
-          }
-      }
-    })
-    .catch((error) => {
-        console.error('SPX error in getMessages().',error)
-    });
-} // getMessages ended
-
-function getMessages2(or) {
-    // This is called from heartbeat after a day change and will
-    // post anonymous usage data and may get potential notification
-    // data back to be displayed in the SPX user interface.
-    // This function is in early stage in v 1.1.0 and will be
-    // fully implemented in future versions.
-    ajaxpost('/api/heartbeat', {data:or});
-} // getMessages2 ended
 
 function handleRendererPopups(data) {
     // open / close renderer popups 
@@ -1674,7 +1534,6 @@ function nextItem(itemrow='') {
             // console.log('FunctionName:' + FunctionName);
             window[FunctionName]([FunctionArgs, conditionVal, data.epoch]);
         }, parseInt(ExecuteDelay));
-        heartbeat(314); // identifier
     }
 
 
@@ -1692,7 +1551,6 @@ function previewItem(itemrow='') {
     data.command       = 'preview'; // added in 1.1.0
     working('Sending ' + data.command + ' request.');
     ajaxpost('/gc/playout',data);
-    heartbeat(308); // identifier
 
 
 } // previewItem
@@ -1732,11 +1590,6 @@ function playItem(itemrow='', forcedCommand='', preventPlayout=false) {
         working('Sending ' + data.command + ' request.');
         ajaxpost('/gc/playout',data);
     }
-
-    // Stats
-    if (data.command == 'play' || data.command=="playonce") { heartbeat(302) }
-    if (data.command == 'continue' ) { heartbeat(304) }
-    if (data.command == 'stop' ) { heartbeat(306) }
 
     // playonce (for out type=none) command acts on the server, but the state will not be saved to JSON
     let isPlay = false;
@@ -1811,7 +1664,6 @@ function playItem(itemrow='', forcedCommand='', preventPlayout=false) {
                 showMessageSlider('Function "' + FunctionName + '" not found in current custom functions library file.', 'warn');
             }
         }, parseInt(ExecuteDelay));
-        heartbeat(310); // identifier
     }
 
     // Check for function_onStop event (improved in 1.1.4):
@@ -1831,7 +1683,6 @@ function playItem(itemrow='', forcedCommand='', preventPlayout=false) {
             // console.log('FunctionName:' + FunctionName);
             window[FunctionName]([FunctionArgs, conditionVal, data.epoch]);
         }, parseInt(ExecuteDelay));
-        heartbeat(312); // identifier
     }
 
     // Remember, onNext is handled in nextItem();
@@ -1871,7 +1722,6 @@ function playItemLocal(itemID) {
     data.epoch    = itemID || 0;
     data.command  = 'autoPlayLocal';
     ajaxpost('/gc/playout',data);
-    heartbeat(308)
 } // playItemLocal
 
 function renameRundown() {
