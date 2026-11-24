@@ -28,6 +28,7 @@ let apiCache = [] // used to cache [undocumented] API calls
 let ack = 'Sent request to SPX server. Acknowledgement is not to be expected.'
 let ack2 = 'Sent request to SPX Controller. Acknowledgement is not to be expected.'
 const apiHandler = require('../utils/api-handlers.js');
+const autoOut = require('../utils/spx_autoout.js');
 
 const notInSolo = {
 	status: 501,
@@ -864,32 +865,25 @@ router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
 		return fail(400, targets.error, targets.warnings);
 	}
 
-	const playoutBody = {
-		prepopulated: 'true',
-		referrer: 'directplayout', // lets the handler run auto-out for a numeric out
+	const spec = {
 		command: command,
 		relpath: relpath,
-		relpathCCG: relpath.split('.htm')[0],
 		dataformat: body.dataformat === 'xml' ? 'xml' : 'json',
-		playserver: targets.playserver,
-		playchannel: targets.playchannel,
-		playlayer: targets.playlayer,
-		webplayout: targets.webplayout,
+		targets: targets,
 		out: body.out === undefined || body.out === null ? 'manual' : String(body.out),
 		fields: fields,
+		rawFields: rawFields,
+		link: null,
 	};
 
 	// Optional link to a rundown item.
 	const link = body.updateRundownItem;
-	let reload = null;
-	let restoreMemory = null;
 	if (link !== undefined && link !== null) {
 		if (typeof link !== 'object' || !link.itemID || !link.project || !link.rundown) {
 			return fail(400, 'Property updateRundownItem needs itemID, project and rundown.');
 		}
 		const project = String(link.project).trim();
 		const rundown = String(link.rundown).trim();
-		const itemID = String(link.itemID).trim();
 		const dataroot = path.resolve(spx.getDatarootFolder());
 		const datafile = path.resolve(dataroot, project, 'data', rundown + '.json');
 		const relative = path.relative(dataroot, datafile);
@@ -899,49 +893,23 @@ router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
 		if (!fs.existsSync(datafile)) {
 			return fail(404, 'Rundown [' + project + '/' + rundown + '] not found.');
 		}
-
-		const memory = global.rundownData || {};
-		const controllerConnected = [...io.sockets.sockets.values()].some(
-			(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
-		);
-		const isLoaded = memory.project === project && memory.rundown === rundown;
-		const isOpen = controllerConnected && isLoaded;
-
-		if (link.persist === true || link.persist === 'true') {
-			if (command === 'next') {
-				return fail(400, 'updateRundownItem.persist works with play and stop, not continue.');
-			}
-			// The handler saves into the rundown it has in memory, whichever
-			// that is: only use memory when it is this rundown in an open
-			// controller, otherwise make it read the file.
-			playoutBody.updateRundownItem = { persist: true, project: project, rundown: rundown, itemID: itemID };
-			playoutBody.forceFileReadOnce = !isOpen;
-			// The handler saves these to the rundown and cleans them up for playout.
-			playoutBody.fields = rawFields;
-			if (Object.keys(memory).length === 0) restoreMemory = {};
-			if (link.updateUI === true || link.updateUI === 'true') {
-				// Controllers show the saved data only after a reload.
-				reload = { project: project, rundown: rundown };
-			}
-		} else if ((link.updateUI === true || link.updateUI === 'true') && isLoaded && command !== 'next') {
-			// Only the item's on-air indicator; only for the loaded rundown,
-			// as duplicated rundowns share item IDs.
-			playoutBody.updateRundownItem = { updateUI: true, itemID: itemID };
+		const persist = link.persist === true || link.persist === 'true';
+		if (persist && command === 'next') {
+			return fail(400, 'updateRundownItem.persist works with play and stop, not continue.');
 		}
+		spec.link = {
+			project: project,
+			rundown: rundown,
+			datafile: datafile,
+			itemID: String(link.itemID).trim(),
+			persist: persist,
+			updateUI: link.updateUI === true || link.updateUI === 'true',
+		};
 	}
 
-	const result = await runPlayout(playoutBody);
-	if (restoreMemory) {
-		global.rundownData = restoreMemory;
-	}
+	const result = await runDirectPlayout(spec);
 	if (result.status !== 200) {
-		const message = String(result.body).replace('Error in /gc/playout: ', '');
-		const status = /not found on the rundown/.test(message) ? 404 : 500;
-		return fail(status, message, targets.warnings);
-	}
-
-	if (reload) {
-		io.emit('SPXMessage2Controller', { APIcmd: 'RundownReload', project: reload.project, rundown: reload.rundown });
+		return fail(result.status, result.message, targets.warnings);
 	}
 
 	res.status(200).json({
@@ -956,6 +924,87 @@ router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
 		warnings: targets.warnings,
 	});
 }); // end directplayout
+
+
+// Plays, continues or stops a validated direct playout (see directplayout).
+// When it plays with a numeric out, the server stops it again by running the
+// same playout with "stop" (as an auto-out: controllers showing the linked
+// rundown get an indicator update instead of a reload). Returns
+// { status, message }.
+async function runDirectPlayout(spec, isAutoOut = false) {
+	const { command, targets, link } = spec;
+	const playoutBody = {
+		prepopulated: 'true',
+		referrer: 'directplayout',
+		autoOutByCaller: true, // auto-out is scheduled below
+		command: command,
+		relpath: spec.relpath,
+		relpathCCG: spec.relpath.split('.htm')[0],
+		dataformat: spec.dataformat,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		out: spec.out,
+		fields: spec.fields,
+	};
+
+	let reload = false;
+	let memoryWasEmpty = false;
+	if (link) {
+		const state = rundownState(link.project, link.rundown);
+		if (link.persist) {
+			// The handler saves into the rundown it has in memory, whichever
+			// that is: only use memory when it is this rundown in an open
+			// controller, otherwise make it read the file.
+			playoutBody.updateRundownItem = { persist: true, project: link.project, rundown: link.rundown, itemID: link.itemID };
+			playoutBody.forceFileReadOnce = !state.isOpen;
+			// The handler saves these to the rundown and cleans them up for playout.
+			playoutBody.fields = spec.rawFields;
+			memoryWasEmpty = Object.keys(state.memory).length === 0;
+			if (link.updateUI && isAutoOut) {
+				// Data unchanged: only the item's on-air indicator.
+				playoutBody.updateRundownItem.updateUI = state.isLoaded;
+			} else if (link.updateUI) {
+				// Controllers show the saved data only after a reload.
+				reload = true;
+			}
+		} else if (link.updateUI && state.isLoaded && command !== 'next') {
+			// Only the item's on-air indicator; only for the loaded rundown,
+			// as duplicated rundowns share item IDs.
+			playoutBody.updateRundownItem = { updateUI: true, itemID: link.itemID };
+		}
+	}
+
+	const result = await runPlayout(playoutBody);
+	if (memoryWasEmpty) {
+		global.rundownData = {};
+	}
+	if (result.status !== 200) {
+		return playoutFailure(result);
+	}
+
+	if (reload) {
+		io.emit('SPXMessage2Controller', { APIcmd: 'RundownReload', project: link.project, rundown: link.rundown });
+	}
+
+	if (command === 'play') {
+		const keys = autoOut.layerKeys(targets);
+		if (link && link.persist) {
+			keys.push(autoOut.itemKey(link.datafile, link.itemID));
+		}
+		scheduleAutoOut(spec.out, keys, 'direct playout of ' + spec.relpath, async () => {
+			if (link && link.persist) {
+				const item = currentRundownItem(link.datafile, link.itemID, rundownState(link.project, link.rundown).isOpen);
+				if (!item || item.onair !== 'true') {
+					return null; // linked item already stopped
+				}
+			}
+			return runDirectPlayout({ ...spec, command: 'stop', fields: [], rawFields: [] }, true);
+		});
+	}
+	return { status: 200, message: 'OK' };
+}
 
 
 router.get('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
@@ -1053,42 +1102,9 @@ router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 		return fail(404, 'Rundown [' + file + '] not found.');
 	}
 
-	// If this rundown is open in a controller, its in-memory copy is the
-	// current state: play from it, as a click in that controller would (the
-	// controller then also runs the auto-out timer). Otherwise read the file,
-	// let the server run auto-out, and leave the memory as it was.
-	// The memory keeps the last opened rundown after its tab is closed, so
-	// also require a connected controller.
-	const memory = global.rundownData || {};
-	const controllerConnected = [...io.sockets.sockets.values()].some(
-		(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
-	);
-	const isLoaded = memory.project === project && memory.rundown === rundown;
-	const isOpen = controllerConnected && isLoaded;
-	const memoryWasEmpty = Object.keys(memory).length === 0;
-
-	const playoutReq = {
-		body: {
-			datafile: datafile,
-			epoch: itemID,
-			command: command,
-			forceFileReadOnce: !isOpen,
-			// Update the item indicator in controllers showing this rundown.
-			// Only for the loaded rundown (a duplicated rundown shares item
-			// IDs), and not for "next", which the controller would treat as
-			// a play/stop toggle.
-			updateRundownItem: isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
-		},
-	};
-	const result = await runPlayout(playoutReq.body);
-	if (memoryWasEmpty && !isOpen) {
-		global.rundownData = {};
-	}
-
+	const result = await runRundownItemCommand({ project, rundown, datafile, itemID, command });
 	if (result.status !== 200) {
-		const message = String(result.body).replace('Error in /gc/playout: ', '');
-		const status = /not found on the rundown/.test(message) ? 404 : 500;
-		return res.status(status).json({ status, message });
+		return res.status(result.status).json(result);
 	}
 
 	let dataOut = {};
@@ -1099,6 +1115,115 @@ router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 	dataOut.command = req.query.command;
 	res.status(200).json(dataOut);
 }); // end controlRundownItemByID
+
+
+// Plays, continues or stops an item of a rundown file on the server (see
+// controlRundownItemByID). When it plays an item with a numeric out, the
+// server stops it again after that time, also when the rundown is open in a
+// controller (which runs the same timer: whichever stops it first cancels
+// the other). Returns { status, message }.
+async function runRundownItemCommand({ project, rundown, datafile, itemID, command }) {
+	// If this rundown is open in a controller, its in-memory copy is the
+	// current state: play from it, as a click in that controller would.
+	// Otherwise read the file, and leave the memory as it was.
+	const state = rundownState(project, rundown);
+	const memoryWasEmpty = Object.keys(state.memory).length === 0;
+
+	const result = await runPlayout({
+		datafile: datafile,
+		epoch: itemID,
+		command: command,
+		forceFileReadOnce: !state.isOpen,
+		autoOutByCaller: true, // auto-out is scheduled below
+		// Update the item indicator in controllers showing this rundown.
+		// Only for the loaded rundown (a duplicated rundown shares item
+		// IDs), and not for "next", which the controller would treat as
+		// a play/stop toggle.
+		updateRundownItem: state.isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
+	});
+	if (memoryWasEmpty && !state.isOpen) {
+		global.rundownData = {};
+	}
+	if (result.status !== 200) {
+		return playoutFailure(result);
+	}
+
+	if (command === 'play') {
+		const item = currentRundownItem(datafile, itemID, false); // play saved it to the file
+		if (item) {
+			const keys = [autoOut.itemKey(datafile, itemID), ...autoOut.layerKeys(item)];
+			scheduleAutoOut(item.out, keys, 'rundown item ' + project + '/' + rundown + ' [' + itemID + ']', async () => {
+				const current = currentRundownItem(datafile, itemID, rundownState(project, rundown).isOpen);
+				if (!current || current.onair !== 'true') {
+					return null; // already stopped
+				}
+				return runRundownItemCommand({ project, rundown, datafile, itemID, command: 'stop' });
+			});
+		}
+	}
+	return { status: 200, message: 'OK' };
+}
+
+
+// How a rundown relates to the controller: loaded in memory (the last
+// rundown a controller opened), and open in a connected controller. The
+// memory keeps the rundown after its tab is closed, so "open" also requires
+// a connected controller.
+function rundownState(project, rundown) {
+	const memory = global.rundownData || {};
+	const controllerConnected = [...io.sockets.sockets.values()].some(
+		(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
+	);
+	const isLoaded = memory.project === project && memory.rundown === rundown;
+	return { memory: memory, isLoaded: isLoaded, isOpen: controllerConnected && isLoaded };
+}
+
+
+// A rundown item's current data: from memory when the rundown is open in a
+// controller (its state is the current one), otherwise from the file.
+function currentRundownItem(datafile, itemID, fromMemory) {
+	try {
+		const data = fromMemory ? global.rundownData : JSON.parse(fs.readFileSync(datafile, 'utf8'));
+		return (data.templates || []).find((t) => t.itemID == itemID);
+	} catch (error) {
+		logger.warn('Cannot read item [' + itemID + '] of ' + datafile + ': ' + error);
+		return undefined;
+	}
+}
+
+
+// Turns a failed playout handler response into { status, message }.
+function playoutFailure(result) {
+	const message = String(result.body).replace('Error in /gc/playout: ', '');
+	const status = /not found on the rundown/.test(message) ? 404 : 500;
+	return { status: status, message: message };
+}
+
+
+// Schedules the server-side auto-out of an API playout when `out` is a
+// number of milliseconds. stop() runs when the time is up, unless a play or
+// stop of the same item or on the same layers cancels it first (see
+// utils/spx_autoout.js). stop() resolves with { status, message }, or null
+// when there was nothing to stop.
+function scheduleAutoOut(out, keys, what, stop) {
+	const ms = parseInt(out);
+	if (isNaN(ms) || ms < 0) {
+		return;
+	}
+	logger.verbose('Auto-out of ' + what + ' in ' + ms + ' ms.');
+	autoOut.schedule(keys, ms, async () => {
+		try {
+			const result = await stop();
+			if (!result) {
+				logger.verbose('Auto-out of ' + what + ' skipped: already stopped.');
+			} else if (result.status !== 200) {
+				logger.warn('Auto-out of ' + what + ' failed: ' + result.message);
+			}
+		} catch (error) {
+			logger.error('Auto-out of ' + what + ' failed: ' + error);
+		}
+	});
+}
 
 
 router.get('/rundown/get', spxAuth.CheckAPIKey, async (req, res) => {

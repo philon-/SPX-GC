@@ -169,13 +169,20 @@ describe('controlRundownItemByID with the rundown open in a controller', () => {
     assert.equal(onair(spx, MANUAL_ITEM), 'true');
   });
 
-  it('leaves auto-out to the controller', async () => {
-    const ui = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'updateRundownItem');
+  it('stops auto-out items itself too, in case the controller does not', async () => {
+    // The controller runs the same timer, and whichever stops the item first
+    // cancels the other. This stand-in controller never stops anything, like
+    // a controller tab that was closed after the play.
+    const uiPlay = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'updateRundownItem' && d.command === 'play');
+    const stopped = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'stopTemplate', 6000);
+    const uiStop = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'updateRundownItem' && d.command === 'stop', 6000);
     const res = await control(spx, 'play', AUTO_OUT_ITEM);
     assert.equal(res.status, 200);
-    assert.equal((await ui).command, 'play'); // controller arms its own out timer from this
-    const stops = (await spx.listener.collect('SPXMessage2Client', 4000)).filter((d) => d.spxcmd === 'stopTemplate');
-    assert.deepEqual(stops, [], 'server should not also stop the item: ' + JSON.stringify(stops));
+    await uiPlay;
+    assert.equal((await stopped).webplayout, '5');
+    assert.equal((await uiStop).itemID, AUTO_OUT_ITEM);
+    assert.equal((await memoryItem(AUTO_OUT_ITEM)).onair, 'false');
+    assert.equal(onair(spx, AUTO_OUT_ITEM), 'false');
   });
 
   it('plays another rundown from its file without touching the open one', async () => {

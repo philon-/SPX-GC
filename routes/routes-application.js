@@ -14,6 +14,7 @@ const spx = require('../utils/spx_server_functions.js');
 const cfg = require('../utils/spx_getconf.js');
 const PlayoutCCG = require('../utils/playout_casparCG.js');
 const PlayoutWEB = require('../utils/playout_webplayer.js');
+const autoOut = require('../utils/spx_autoout.js');
 const spxAuth = require('../utils/spx_auth.js');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
@@ -1531,8 +1532,9 @@ async function playout(req, res) {
 					});
 				}
 
-				// API Call executed. Should we set an autostop?
-				if (forceDiskRead || req.body.referrer == 'directplayout') {
+				// API Call executed. Should we set an autostop? (Not when the
+				// API route handles auto-out itself, see utils/spx_autoout.js.)
+				if ((forceDiskRead || req.body.referrer == 'directplayout') && !req.body.autoOutByCaller) {
 					let numeric = parseInt(dataOut.out);
 					if (isNaN(numeric)) {
 						logger.verbose('API call: out was not a number, skipping autostop.');
@@ -1627,6 +1629,16 @@ async function playout(req, res) {
 			default:
 				logger.warn('/gc/playout did not recognize command "' + playOutCommand + '".');
 				break;
+		}
+
+		// A play or stop replaces any pending API auto-out of this item or on
+		// these layers (see utils/spx_autoout.js).
+		if (playOutCommand == 'play' || playOutCommand == 'stop') {
+			let autoOutKeys = autoOut.layerKeys(dataOut);
+			if (itemID && templateIndex > -1) {
+				autoOutKeys.push(autoOut.itemKey(RundownFile, itemID));
+			}
+			autoOut.cancel(autoOutKeys);
 		}
 
 		// Added in 1.3.2 / updateRundownItem in the UI if set
