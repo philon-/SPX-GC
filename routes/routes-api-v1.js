@@ -766,6 +766,20 @@ router.post('/saveCustomJSON', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end saveCustomJSON
 
 
+// Runs the /gc/playout handler (without its login check) with the given
+// request body. Resolves with { status, body } of its response.
+async function runPlayout(body) {
+	let result = { status: 500, body: '' };
+	const playoutRes = {
+		status(code) { result.status = code; return this; },
+		send(data) { result.body = data || ''; return this; },
+	};
+	const { playout } = require('./routes-application.js'); // lazy: loaded after this file
+	await playout({ body: body }, playoutRes);
+	return result;
+}
+
+
 router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 	// Plays, continues or stops an item of a rundown file on the server, so
 	// unlike /item/* this does not need the rundown open in a controller.
@@ -828,14 +842,7 @@ router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 			updateRundownItem: isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
 		},
 	};
-	let result = { status: 500, body: '' };
-	const playoutRes = {
-		status(code) { result.status = code; return this; },
-		send(body) { result.body = body || ''; return this; },
-	};
-
-	const { playout } = require('./routes-application.js'); // lazy: loaded after this file
-	await playout(playoutReq, playoutRes);
+	const result = await runPlayout(playoutReq.body);
 	if (memoryWasEmpty && !isOpen) {
 		global.rundownData = {};
 	}
