@@ -38,7 +38,7 @@ function copyRuntimeFiles(destDir) {
   }
 }
 
-function writeConfig(dir, port, general) {
+function writeConfig(dir, port, general, casparcgServers = []) {
   const slash = (p) => p.replace(/\\/g, '/') + '/';
   const config = {
     general: {
@@ -66,11 +66,79 @@ function writeConfig(dir, port, general) {
       recents: [],
       ...general,
     },
-    casparcg: { servers: [] },
+    casparcg: { servers: casparcgServers },
     osc: { enable: false, port: 57121 },
     globalExtras: { customscript: '/ExtraFunctions/demoFunctions.js', CustomControls: [] },
   };
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config, null, 2));
+}
+
+// A stand-in CasparCG server: accepts SPX's AMCP connection and records the
+// command lines it receives.
+class FakeCasparCG {
+  constructor() {
+    this.commands = [];
+    this.waiters = [];
+    this.sockets = new Set();
+    this.server = net.createServer((socket) => {
+      this.sockets.add(socket);
+      socket.on('close', () => this.sockets.delete(socket));
+      let buffer = '';
+      socket.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\r\n');
+        buffer = lines.pop();
+        for (const line of lines.map((l) => l.trim()).filter(Boolean)) this._receive(line);
+      });
+    });
+  }
+
+  listen() {
+    return new Promise((resolve) => {
+      this.server.listen(0, '127.0.0.1', () => {
+        this.port = this.server.address().port;
+        resolve();
+      });
+    });
+  }
+
+  async connected(timeoutMs = 10000) {
+    const deadline = Date.now() + timeoutMs;
+    while (this.sockets.size === 0) {
+      if (Date.now() > deadline) throw new Error('SPX did not connect to the fake CasparCG server');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  _receive(line) {
+    this.commands.push(line);
+    this.waiters = this.waiters.filter((w) => {
+      if (w.match(line)) {
+        clearTimeout(w.timer);
+        w.resolve(line);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Resolves with the first command line (received from now on) for which
+  // match(line) is true. Call BEFORE triggering the request.
+  next(match, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      const waiter = { match, resolve };
+      waiter.timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        reject(new Error('Timed out waiting for a CasparCG command'));
+      }, timeoutMs);
+      this.waiters.push(waiter);
+    });
+  }
+
+  close() {
+    for (const s of this.sockets) s.destroy();
+    return new Promise((r) => this.server.close(() => r()));
+  }
 }
 
 class SocketListener {
@@ -135,12 +203,20 @@ class SocketListener {
   }
 }
 
-// Starts a server. `general` overrides config.general values.
-async function startServer({ general = {} } = {}) {
+// Starts a server. `general` overrides config.general values. With
+// `casparcg: true`, a fake CasparCG server named OVERLAY is configured and
+// available as `.casparcg`.
+async function startServer({ general = {}, casparcg = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spx-test-'));
   copyRuntimeFiles(dir);
   const port = await freePort();
-  writeConfig(dir, port, general);
+  let fakeCasparCG = null;
+  if (casparcg) {
+    fakeCasparCG = new FakeCasparCG();
+    await fakeCasparCG.listen();
+  }
+  const ccgServers = fakeCasparCG ? [{ name: 'OVERLAY', host: '127.0.0.1', port: fakeCasparCG.port }] : [];
+  writeConfig(dir, port, general, ccgServers);
 
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: dir,
@@ -169,18 +245,21 @@ async function startServer({ general = {} } = {}) {
 
   const listener = new SocketListener(baseUrl);
   await listener.connected();
+  if (fakeCasparCG) await fakeCasparCG.connected();
 
   return {
     dir,
     port,
     baseUrl,
     listener,
+    casparcg: fakeCasparCG,
     output: () => output,
     readRundown(project, rundown) {
       return JSON.parse(fs.readFileSync(path.join(dir, 'DATAROOT', project, 'data', `${rundown}.json`), 'utf8'));
     },
     async stop() {
       listener.close();
+      if (fakeCasparCG) await fakeCasparCG.close();
       if (child.exitCode === null) {
         const exited = new Promise((r) => child.once('exit', r));
         child.kill();

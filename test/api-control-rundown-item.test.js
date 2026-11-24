@@ -188,3 +188,31 @@ describe('controlRundownItemByID when the controller tab was closed', () => {
     }
   });
 });
+
+describe('controlRundownItemByID with a CasparCG server', () => {
+  let spx;
+  before(async () => {
+    spx = await startServer({ casparcg: true });
+  });
+  after(async () => {
+    await spx?.stop();
+  });
+
+  it('play adds the template with its data on the CasparCG layer', async () => {
+    const cmd = spx.casparcg.next((l) => l.startsWith('CG 1-4 ADD'));
+    const res = await control(spx, 'play');
+    assert.equal(res.status, 200);
+    const line = await cmd;
+    assert.match(line, /^CG 1-4 ADD 1 "[^"]*\/softpix\/html\/Template_Pack_1\.4\.0\/INFO_LEFT\.html" 1 "/);
+    assert.match(line, /\\"f0\\":\\"Headquarters\\"/);
+  });
+
+  it('continue and stop send NEXT and STOP', async () => {
+    const next = spx.casparcg.next((l) => l.startsWith('CG 1-2 NEXT'));
+    assert.equal((await control(spx, 'continue', STEPS_ITEM)).status, 200);
+    await next;
+    const stop = spx.casparcg.next((l) => l.startsWith('CG 1-4 STOP'));
+    assert.equal((await control(spx, 'stop')).status, 200);
+    await stop;
+  });
+});
