@@ -1277,7 +1277,7 @@ router.post('/gc/:foldername/:filename/', spxAuth.CheckLogin, async (req, res) =
 	}
 }); // gc post end
 
-router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
+async function playout(req, res) {
 	// Request: data object (command, datafile, templateIndex)
 	// Returns: AJAX response
 	//
@@ -1677,7 +1677,9 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 		logger.error('ERROR in /gc/playout. ' + error);
 		res.status(500).send('Error in /gc/playout: ' + error)  // error 500 AJAX RESPONSE
 	};
-}); // playout ended
+} // playout ended
+
+router.post('/gc/playout', spxAuth.CheckLogin, playout);
 
 
 router.post('/gc/playaudio', spxAuth.CheckLogin, (req, res) => {
@@ -2311,3 +2313,7 @@ function getResolutionFromConfig(cfg, postRequest) {
 
 
 module.exports = router;
+
+// The playout handler without the login check, for API routes that run
+// rundown items on the server (see /api/v1/controlRundownItemByID).
+module.exports.playout = playout;
