@@ -19,7 +19,8 @@
     "dev2": "nodemon server.js config2.json -i DATAROOT/* -i config2.json",
     "start": "pm2 start server.js --name GC",
     "stop": "pm2 stop server.js",
-    "build": "BUILD_PACKAGES.BAT"
+    "build": "node scripts/build.js",
+    "build:host": "node scripts/build.js --host"
   },
   "keywords": [],
   "author": "Tuomo Kulomaa <tuomo@spxgraphics.com> (https://spxgraphics.com)",
