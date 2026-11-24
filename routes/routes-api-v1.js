@@ -179,8 +179,8 @@ router.get('/', function (req, res) {
 
 			{
 				"section": "Server API",
-				"restriction": "SPX Broadcast license required",
-				"info": "API endpoints targeting the SPX server directly without going through the rundown controller. These endpoints are for advanced uses and require a SPX Broadcast license.",
+				"restriction": "Some endpoints require SPX Broadcast license",
+				"info": "API endpoints targeting the SPX server directly without going through the rundown controller. These endpoints are for advanced uses and some of them require a SPX Broadcast license.",
 				"commands": [
 					{
 						"vers": "v1.0.12, v.1.3.2",
@@ -192,7 +192,6 @@ router.get('/', function (req, res) {
 					},
 					{
 						"vers": "v1.1.0",
-						"active": false,
 						"method": "GET",
 						"param": "/api/v1/controlRundownItemByID?file=MyProject/FirstRundown&item=1234567890&command=play",
 						"info": "Play / stop an item from a known rundown. (Remember you can rename rundown items from SPX GUI)"
@@ -768,7 +767,92 @@ router.post('/saveCustomJSON', spxAuth.CheckAPIKey, async (req, res) => {
 
 
 router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Plays, continues or stops an item of a rundown file on the server, so
+	// unlike /item/* this does not need the rundown open in a controller.
+	// ?file=Project/Rundown&item=1234567890&command=play|continue|stop
+	const commands = { play: 'play', continue: 'next', next: 'next', stop: 'stop' };
+	const fail = (status, message) => {
+		logger.warn('controlRundownItemByID: ' + message);
+		return res.status(status).json({ status, message });
+	};
+
+	const file = (await spx.strip(req.query.file || '')).trim();
+	const itemID = (req.query.item || '').trim();
+	const command = commands[(req.query.command || '').trim().toLowerCase()];
+
+	const [project, rundown, ...rest] = file.split('/');
+	if (!project || !rundown || rest.length) {
+		return fail(400, 'Parameter file must be given as Project/Rundown.');
+	}
+	if (!itemID) {
+		return fail(400, 'Parameter item (rundown item ID) is required.');
+	}
+	if (!command) {
+		return fail(400, 'Parameter command must be play, continue or stop.');
+	}
+
+	const dataroot = path.resolve(spx.getDatarootFolder());
+	const datafile = path.resolve(dataroot, project, 'data', rundown + '.json');
+	const relative = path.relative(dataroot, datafile);
+	if (relative.split(path.sep)[0] === '..' || path.isAbsolute(relative)) {
+		return fail(400, 'Rundown [' + file + '] is outside the dataroot folder.');
+	}
+	if (!fs.existsSync(datafile)) {
+		return fail(404, 'Rundown [' + file + '] not found.');
+	}
+
+	// If this rundown is open in a controller, its in-memory copy is the
+	// current state: play from it, as a click in that controller would (the
+	// controller then also runs the auto-out timer). Otherwise read the file,
+	// let the server run auto-out, and leave the memory as it was.
+	// The memory keeps the last opened rundown after its tab is closed, so
+	// also require a connected controller.
+	const memory = global.rundownData || {};
+	const controllerConnected = [...io.sockets.sockets.values()].some(
+		(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
+	);
+	const isLoaded = memory.project === project && memory.rundown === rundown;
+	const isOpen = controllerConnected && isLoaded;
+	const memoryWasEmpty = Object.keys(memory).length === 0;
+
+	const playoutReq = {
+		body: {
+			datafile: datafile,
+			epoch: itemID,
+			command: command,
+			forceFileReadOnce: !isOpen,
+			// Update the item indicator in controllers showing this rundown.
+			// Only for the loaded rundown (a duplicated rundown shares item
+			// IDs), and not for "next", which the controller would treat as
+			// a play/stop toggle.
+			updateRundownItem: isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
+		},
+	};
+	let result = { status: 500, body: '' };
+	const playoutRes = {
+		status(code) { result.status = code; return this; },
+		send(body) { result.body = body || ''; return this; },
+	};
+
+	const { playout } = require('./routes-application.js'); // lazy: loaded after this file
+	await playout(playoutReq, playoutRes);
+	if (memoryWasEmpty && !isOpen) {
+		global.rundownData = {};
+	}
+
+	if (result.status !== 200) {
+		const message = String(result.body).replace('Error in /gc/playout: ', '');
+		const status = /not found on the rundown/.test(message) ? 404 : 500;
+		return res.status(status).json({ status, message });
+	}
+
+	let dataOut = {};
+	dataOut.status = 200;
+	dataOut.message = 'OK';
+	dataOut.file = file;
+	dataOut.item = itemID;
+	dataOut.command = req.query.command;
+	res.status(200).json(dataOut);
 }); // end controlRundownItemByID
 
 

@@ -91,6 +91,13 @@ class SocketListener {
     });
   }
 
+  // Identify this connection like an SPX page does on connect, e.g. the
+  // controller page sends 'SPX_CONTROLLER'.
+  async identify(name) {
+    this.socket.emit('SPXMessage2Server', { spxcmd: 'identifyClient', name });
+    await new Promise((r) => setTimeout(r, 200)); // let the server process it
+  }
+
   _receive(event, data) {
     this.messages.push({ event, data });
     this.waiters = this.waiters.filter((w) => {
