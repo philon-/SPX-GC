@@ -221,7 +221,6 @@ router.get('/', function (req, res) {
 					{
 						"vers": "v1.1.1",
 						"method": "GET",
-						"active": false,
 						"param": "/api/v1/rundown/get",
 						"info": "Returns current rundown as json. "
 					},
@@ -774,7 +773,12 @@ router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 
 
 router.get('/rundown/get', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// The rundown currently open in the controller, as kept in memory
+	// (same format as the rundown file).
+	if (!global.rundownData || !global.rundownData.templates) {
+		return res.status(404).json({ status: 404, message: 'No rundown is currently open in SPX controller.' });
+	}
+	res.status(200).json(global.rundownData);
 }); // end get current rundown as JSON
 
 
