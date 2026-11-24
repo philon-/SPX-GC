@@ -1544,7 +1544,8 @@ async function playout(req, res) {
 			// == NEXT / aka CONTINUE  =====================================
 			case 'next':
 
-				if (dataOut.playserver != '-' || dataOut.webplayout != '-') {
+				// Prepopulated playouts have no rundown item to mark on air.
+				if ((dataOut.playserver != '-' || dataOut.webplayout != '-') && RundownData.templates?.[templateIndex]) {
 					RundownData.templates[templateIndex].onair = 'true';
 				}
 

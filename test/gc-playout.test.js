@@ -115,6 +115,26 @@ describe('POST /gc/playout with prepopulated data', () => {
     assert.equal(open.status, 200);
     assert.equal((await open.json()).rundown, 'MyFirstRundown');
   });
+
+  it('continues the template', async () => {
+    // Regression: crashed with 500 marking a (non-existent) rundown item on air.
+    const msg = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'nextTemplate');
+    const res = await fetch(`${spx.baseUrl}/gc/playout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prepopulated: 'true',
+        command: 'next',
+        relpath: '/softpix/html/Template_Pack_1.4.0/INFO_LEFT.html',
+        playserver: '-',
+        playchannel: '1',
+        playlayer: '10',
+        webplayout: '10',
+      }),
+    });
+    assert.equal(res.status, 200, await res.text());
+    assert.equal((await msg).webplayout, '10');
+  });
 });
 
 describe('POST /gc/playout invoke on CasparCG', () => {
