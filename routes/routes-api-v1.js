@@ -144,7 +144,6 @@ router.get('/', function (req, res) {
 						"method": "GET",
 						"param": "/api/v1/item/play/1234567890",
 						"info": "Start item by ID on the active rundown.",
-            "active": false,
 					},
 
 					{
@@ -152,7 +151,6 @@ router.get('/', function (req, res) {
 						"method": "GET",
 						"param": "/api/v1/item/continue/1234567890",
 						"info": "Continue to item by ID on the active rundown. Notice this needs support from the template itself and does not work as play or stop.",
-						"active": false,
 					},
 
 					{
@@ -160,7 +158,6 @@ router.get('/', function (req, res) {
 						"method": "GET",
 						"param": "/api/v1/item/stop/1234567890",
 						"info": "Stop item by ID on the active rundown.",
-						"active": false,
 					},
 					{
 						"vers": "v1.0.12",
@@ -687,19 +684,26 @@ router.get('/rundown/focusByID/:id', spxAuth.CheckAPIKey, async (req, res) => {
 // }); // end focusByID
 
 
-router.get('/item/play/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-});  // end item play by ID
- 
+// Item commands by ID are executed by the open controller (spx_gc.js handles
+// ItemPlayID / ItemContinueID / ItemStopID), same as the focused-item commands.
+function sendItemCommandByID(APIcmd) {
+	return (req, res) => {
+		let dataOut = {};
+		dataOut.status = 200;
+		dataOut.message = 'OK';
+		dataOut.info = ack2;
+		dataOut.APIcmd = APIcmd;
+		dataOut.itemID = req.params.id;
+		io.emit('SPXMessage2Controller', dataOut);
+		res.status(200).json(dataOut);
+	};
+}
 
-router.get('/item/continue/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-}); // end item continue by ID
+router.get('/item/play/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemPlayID'));
 
+router.get('/item/continue/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemContinueID'));
 
-router.get('/item/stop/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-}); // end item stop by ID
+router.get('/item/stop/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemStopID'));
 
 
 router.get('/invokeTemplateFunction/', spxAuth.CheckAPIKey, async (req, res) => {
