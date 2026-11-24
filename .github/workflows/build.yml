@@ -1,7 +1,7 @@
 name: Build executables
 
-# Builds standalone SPX-GC executables for Linux, macOS and Windows.
-# - Every push/PR to master: build + smoke test, archives kept as workflow artifacts.
+# Tests and builds standalone SPX-GC executables for Linux, macOS and Windows.
+# - Every push/PR to master: tests, build + smoke test, archives kept as workflow artifacts.
 # - Pushing a tag like v1.4.1: additionally publishes a GitHub Release with the archives.
 
 on:
@@ -47,6 +47,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: node scripts/build.js ${{ matrix.targets }}
