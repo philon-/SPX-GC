@@ -159,7 +159,8 @@ module.exports = {
           break;
 
         case 'INVOKE':
-            InvFunct = InvFunct.replace(/"/g, '\\"'); // replace " with \" globally. Added in 1.1.0.
+            // AMCP string escaping: backslashes first, then quotes.
+            InvFunct = InvFunct.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
             global.CCGSockets[this.getSockIndex(data.playserver)].write('CG ' + GFX_Chan + '-' + GFX_Laye + ' INVOKE 1 \"' + InvFunct + '\"\r\n');
             break;
 

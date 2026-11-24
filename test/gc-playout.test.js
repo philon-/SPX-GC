@@ -116,3 +116,30 @@ describe('POST /gc/playout with prepopulated data', () => {
     assert.equal((await open.json()).rundown, 'MyFirstRundown');
   });
 });
+
+describe('POST /gc/playout invoke on CasparCG', () => {
+  let spx;
+  before(async () => {
+    spx = await startServer({ casparcg: true });
+  });
+  after(async () => {
+    await spx?.stop();
+  });
+
+  // How CasparCG reads a quoted AMCP parameter.
+  const amcpUnquote = (s) => s.replace(/\\(["\\])/g, '$1');
+
+  it('escapes quotes and backslashes in the function call', async () => {
+    const invoke = 'myFunc("{\\"name\\":\\"Dana \\\\\\"D\\\\\\" Scully\\"}")';
+    const cmd = spx.casparcg.next((l) => l.startsWith('CG 1-10 INVOKE'));
+    const res = await fetch(`${spx.baseUrl}/gc/playout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prepopulated: 'true', command: 'invoke', playserver: 'OVERLAY', playchannel: '1', playlayer: '10', webplayout: '-', invoke }),
+    });
+    assert.equal(res.status, 200);
+    const line = await cmd;
+    const quoted = line.match(/^CG 1-10 INVOKE 1 "(.*)"$/)[1];
+    assert.equal(amcpUnquote(quoted), invoke);
+  });
+});
