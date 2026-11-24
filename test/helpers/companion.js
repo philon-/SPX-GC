@@ -5,7 +5,7 @@
 // The URL templates below are copied from the module's doAction() in
 // actions.js, including its quirks, so tests exercise SPX exactly the way
 // Companion calls it:
-//   - always plain GET via global fetch (directplayout aside, not covered here)
+//   - plain GET via global fetch (directplayout: POST with a JSON body)
 //   - no API key is ever sent (the module has no apikey setting)
 //   - option values are interpolated without URL encoding
 //   - the response body is read as text; the status code is ignored by the
@@ -41,6 +41,16 @@ const URLS = {
     });
     return `http://${h}:${p}/api/v1/invokeTemplateFunction?${q}`;
   },
+
+  // Not working in module v2.0.1 (it sends the text box as a JSON string,
+  // which SPX rejects). The patched module parses the text box as JSON and
+  // posts the object.
+  directplayout: (h, p, opt) => ({
+    url: `http://${h}:${p}/api/v1/directplayout`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(JSON.parse(opt.body)),
+  }),
 };
 
 // Default option values of the module's actions.
@@ -53,13 +63,17 @@ const DEFAULTS = {
     customFunction: 'myCustomTemplateFunction',
     params: 'Hello World',
   },
+  directplayout: {
+    body: '{"casparServer": "OVERLAY", "casparChannel": "1", "casparLayer": "20", "webplayoutLayer": "20", "relativeTemplatePath": "vendor/pack/templatefile.html", "command": "play"}',
+  },
 };
 
 // Runs a Companion action against the server listening on `port`.
 async function companionAction(port, actionId, options = {}) {
   const build = URLS[actionId];
   if (!build) throw new Error(`Unknown Companion action: ${actionId}`);
-  const res = await fetch(build('127.0.0.1', port, { ...DEFAULTS[actionId], ...options }));
+  const request = build('127.0.0.1', port, { ...DEFAULTS[actionId], ...options });
+  const res = typeof request === 'string' ? await fetch(request) : await fetch(request.url, request);
   const body = await res.text();
   let json = null;
   try {

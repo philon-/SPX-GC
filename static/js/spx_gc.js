@@ -177,6 +177,20 @@ socket.on('SPXMessage2Controller', function (data) {
         case 'RundownStopAll':
             stopAll()
             break;
+
+        case 'RundownReload':
+            // Rundown data was changed on the server (e.g. directplayout with
+            // updateRundownItem.persist). Reload if this controller shows it.
+            // datafile is ".../<project>/data/<rundown>.json"
+            let fileParts = (document.getElementById('datafile')?.value || '').split(/[\\/]/);
+            let thisRundown = (fileParts[fileParts.length-1] || '').replace(/\.json$/, '');
+            let thisProject = fileParts[fileParts.length-3] || '';
+            if (thisProject == data.project && thisRundown == data.rundown) {
+                showMessageSlider('Rundown was updated via API, reloading...', 'info');
+                document.body.style.opacity = '0.4';
+                setTimeout(function () { location.reload(); }, 1000);
+            }
+            break;
         
         case 'RundownAllStatesToStopped':
             // console.log('Turn lights off and set DOM variables. Storage handled separately.')

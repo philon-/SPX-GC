@@ -184,7 +184,6 @@ router.get('/', function (req, res) {
 					{
 						"vers": "v1.0.12, v.1.3.2",
 						"method": "POST",
-						"active": false,
 						"param": "/api/v1/directplayout",
 						"info": "Populate template and execute a play/continue/stop -command to it. Please note the optional <code>updateRundownItem</code> property. <code>updateRundownItemitemID</code> is an optional object for forcing UI updates and persisting to defined rundown file. <b>Please note: special charaters in values does not work at the moment!</b> Post request body example as JSON:",
 						"code": { casparServer: "OVERLAY", casparChannel: "1", casparLayer: "20", webplayoutLayer: "20", relativeTemplatePath: "/vendor/pack/template.html", out: "manual", DataFields: [{ field: "f0", value: "Firstname" }, { field: "f1", value: "Lastname" }], command: "play", updateRundownItem: { updateUI: true, itemID: "myItemID", persist: true, "project": "myFirstProject", "rundown": "myFirstRundown" } }
@@ -809,7 +808,149 @@ router.get('/invokeExtensionFunction/', spxAuth.CheckAPIKey, async (req, res) =>
 // SERVER API ----------------------------------------------------------------------------------
 
 router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Plays, continues or stops a template with the given data, without a
+	// rundown item. Optionally the data and on-air state are saved to a
+	// rundown item (updateRundownItem.persist), and controllers showing that
+	// rundown are refreshed (updateRundownItem.updateUI). Body example:
+	// { casparServer, casparChannel, casparLayer, webplayoutLayer,
+	//   relativeTemplatePath, out, DataFields: [{ field, value }], command,
+	//   updateRundownItem: { updateUI, itemID, persist, project, rundown } }
+	const commands = { play: 'play', continue: 'next', next: 'next', stop: 'stop' };
+	const body = req.body;
+	const fail = (status, message, warnings) => {
+		logger.warn('directplayout: ' + message);
+		return res.status(status).json({ status, message, warnings });
+	};
+	if (!body || typeof body !== 'object' || Array.isArray(body)) {
+		return fail(400, 'Request body must be a JSON object.');
+	}
+
+	const command = commands[String(body.command || '').trim().toLowerCase()];
+	if (!command) {
+		return fail(400, 'Property command must be play, continue or stop.');
+	}
+
+	// Template: must be a file inside ASSETS/templates.
+	const templateRoot = path.resolve(spx.getStartUpFolder(), 'ASSETS', 'templates');
+	const relpathIn = String(body.relativeTemplatePath || '').trim().replace(/\\/g, '/');
+	if (!relpathIn) {
+		return fail(400, 'Property relativeTemplatePath is required.');
+	}
+	const templateFile = path.resolve(templateRoot, '.' + path.posix.normalize('/' + relpathIn));
+	const relpath = '/' + path.relative(templateRoot, templateFile).split(path.sep).join('/');
+	if (relpath.startsWith('/..') || !fs.existsSync(templateFile) || !fs.statSync(templateFile).isFile()) {
+		return fail(404, 'Template [' + relpathIn + '] not found in ASSETS/templates.');
+	}
+
+	// Data fields, cleaned up the same way as rundown item values.
+	const dataFields = body.DataFields === undefined ? [] : body.DataFields;
+	if (!Array.isArray(dataFields) || dataFields.some((f) => !f || typeof f !== 'object' || !f.field)) {
+		return fail(400, 'Property DataFields must be an array of { field, value } objects.');
+	}
+	const fields = dataFields.map((f) => ({
+		field: String(f.field),
+		value: spx.cleanUpString(f.value === undefined || f.value === null ? '' : String(f.value)),
+	}));
+
+	const targets = resolvePlayoutTargets({
+		playserver: body.casparServer,
+		playchannel: body.casparChannel,
+		playlayer: body.casparLayer,
+		webplayout: body.webplayoutLayer,
+	});
+	if (targets.error) {
+		return fail(400, targets.error, targets.warnings);
+	}
+
+	const playoutBody = {
+		prepopulated: 'true',
+		referrer: 'directplayout', // lets the handler run auto-out for a numeric out
+		command: command,
+		relpath: relpath,
+		relpathCCG: relpath.split('.htm')[0],
+		dataformat: body.dataformat === 'xml' ? 'xml' : 'json',
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		out: body.out === undefined || body.out === null ? 'manual' : String(body.out),
+		fields: fields,
+	};
+
+	// Optional link to a rundown item.
+	const link = body.updateRundownItem;
+	let reload = null;
+	let restoreMemory = null;
+	if (link !== undefined && link !== null) {
+		if (typeof link !== 'object' || !link.itemID || !link.project || !link.rundown) {
+			return fail(400, 'Property updateRundownItem needs itemID, project and rundown.');
+		}
+		const project = String(link.project).trim();
+		const rundown = String(link.rundown).trim();
+		const itemID = String(link.itemID).trim();
+		const dataroot = path.resolve(spx.getDatarootFolder());
+		const datafile = path.resolve(dataroot, project, 'data', rundown + '.json');
+		const relative = path.relative(dataroot, datafile);
+		if (/[\\/]/.test(project) || /[\\/]/.test(rundown) || relative.split(path.sep)[0] === '..') {
+			return fail(400, 'Property updateRundownItem has an invalid project or rundown name.');
+		}
+		if (!fs.existsSync(datafile)) {
+			return fail(404, 'Rundown [' + project + '/' + rundown + '] not found.');
+		}
+
+		const memory = global.rundownData || {};
+		const controllerConnected = [...io.sockets.sockets.values()].some(
+			(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
+		);
+		const isLoaded = memory.project === project && memory.rundown === rundown;
+		const isOpen = controllerConnected && isLoaded;
+
+		if (link.persist === true || link.persist === 'true') {
+			if (command === 'next') {
+				return fail(400, 'updateRundownItem.persist works with play and stop, not continue.');
+			}
+			// The handler saves into the rundown it has in memory, whichever
+			// that is: only use memory when it is this rundown in an open
+			// controller, otherwise make it read the file.
+			playoutBody.updateRundownItem = { persist: true, project: project, rundown: rundown, itemID: itemID };
+			playoutBody.forceFileReadOnce = !isOpen;
+			if (Object.keys(memory).length === 0) restoreMemory = {};
+			if (link.updateUI === true || link.updateUI === 'true') {
+				// Controllers show the saved data only after a reload.
+				reload = { project: project, rundown: rundown };
+			}
+		} else if ((link.updateUI === true || link.updateUI === 'true') && isLoaded && command !== 'next') {
+			// Only the item's on-air indicator; only for the loaded rundown,
+			// as duplicated rundowns share item IDs.
+			playoutBody.updateRundownItem = { updateUI: true, itemID: itemID };
+		}
+	}
+
+	const result = await runPlayout(playoutBody);
+	if (restoreMemory) {
+		global.rundownData = restoreMemory;
+	}
+	if (result.status !== 200) {
+		const message = String(result.body).replace('Error in /gc/playout: ', '');
+		const status = /not found on the rundown/.test(message) ? 404 : 500;
+		return fail(status, message, targets.warnings);
+	}
+
+	if (reload) {
+		io.emit('SPXMessage2Controller', { APIcmd: 'RundownReload', project: reload.project, rundown: reload.rundown });
+	}
+
+	res.status(200).json({
+		status: 200,
+		message: 'OK',
+		command: body.command,
+		relativeTemplatePath: relpath,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		warnings: targets.warnings,
+	});
 }); // end directplayout
 
 
