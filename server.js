@@ -873,7 +873,7 @@ var server = app.listen(port, (err) => {
   splash +=
   `\n  + Knowledge Base .......... https://docs.spxgraphics.com` +
   `\n` +
-  `\n  This is SPX Solo. For professional features and support\n  options see SPX Production and SPX Broadcast.`;
+  `\n  This is a fork of SPX Graphics Controller. Original source code licensed under MIT by Tuomo Kulomaa & SPX Graphics.`;
 
   console.log(splash);
 
