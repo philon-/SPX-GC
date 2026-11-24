@@ -107,6 +107,29 @@ describe('controlRundownItemByID without an open controller', () => {
   }
 });
 
+describe('controlRundownItemByID with malformed query strings', () => {
+  let spx;
+  before(async () => {
+    spx = await startServer();
+  });
+  after(async () => {
+    await spx?.stop();
+  });
+
+  // Regression: repeated parameters (arrays) made the handler throw, and
+  // the request never got a response.
+  for (const [name, query] of [
+    ['item', `file=${FILE}&item=a&item=b&command=play`],
+    ['command', `file=${FILE}&item=${MANUAL_ITEM}&command=play&command=stop`],
+    ['file', `file=${FILE}&file=${FILE}&item=${MANUAL_ITEM}&command=play`],
+  ]) {
+    it(`answers a repeated ${name} parameter with an error`, async () => {
+      const res = await fetch(`${spx.baseUrl}/api/v1/controlRundownItemByID?${query}`, { signal: AbortSignal.timeout(5000) });
+      assert.ok(res.status === 400 || res.status === 404, `status ${res.status}`);
+    });
+  }
+});
+
 describe('controlRundownItemByID with the rundown open in a controller', () => {
   let spx;
   before(async () => {

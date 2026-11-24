@@ -1027,9 +1027,10 @@ router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
 		return res.status(status).json({ status, message });
 	};
 
-	const file = (await spx.strip(req.query.file || '')).trim();
-	const itemID = (req.query.item || '').trim();
-	const command = commands[(req.query.command || '').trim().toLowerCase()];
+	// String(): repeated query parameters arrive as arrays.
+	const file = (await spx.strip(String(req.query.file || ''))).trim();
+	const itemID = String(req.query.item || '').trim();
+	const command = commands[String(req.query.command || '').trim().toLowerCase()];
 
 	const [project, rundown, ...rest] = file.split('/');
 	if (!project || !rundown || rest.length) {
