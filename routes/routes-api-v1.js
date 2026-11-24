@@ -144,27 +144,27 @@ router.get('/', function (req, res) {
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/play/1234567890",
-						"info": "Start item by ID on the active rundown.",
+						"info": "Start item by ID on the active rundown. The command is passed to the open controller, so the response is <code>200</code> even if no controller is open or the ID is not found. To play an item of a given rundown file, use <code>controlRundownItemByID</code>.",
 					},
 
 					{
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/continue/1234567890",
-						"info": "Continue to item by ID on the active rundown. Notice this needs support from the template itself and does not work as play or stop.",
+						"info": "Continue to item by ID on the active rundown. Notice this needs support from the template itself and does not work as play or stop. Like play by ID, this is passed to the open controller and always returns <code>200</code>.",
 					},
 
 					{
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/stop/1234567890",
-						"info": "Stop item by ID on the active rundown.",
+						"info": "Stop item by ID on the active rundown. Like play by ID, this is passed to the open controller and always returns <code>200</code>.",
 					},
 					{
 						"vers": "v1.0.12",
 						"method": "GET",
 						"param": "/api/v1/invokeTemplateFunction?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myCustomTemplateFunction&params=Hello%20World",
-						"info": "Uses an invoke handler to call a function in a template. See required parameters in the example call above. JSON objects can be passed as params by urlEncoding stringified JSON. Search SPX Knowledge Base for more info with keyword <code>invoke</code>.",
+						"info": "Uses an invoke handler to call a function in a template that is on air. <code>function</code> is required and must be a plain JavaScript function name (letters, digits, <code>_</code> and <code>$</code>). <code>params</code> is optional and is passed to the function as a string; JSON objects can be passed by urlEncoding stringified JSON. Targets: <code>webplayout</code> is a web renderer layer (layers above 5 use layer 5), and <code>playserver</code>, <code>playchannel</code> and <code>playlayer</code> address CasparCG (channel and layer default to 1). Give at least one target; use <code>-</code> or leave a target out to skip it. A CasparCG server that is not configured or is disabled in SPX is skipped, and the response lists that in <code>warnings</code>. Returns <code>400</code> for invalid parameters. Search SPX Knowledge Base for more info with keyword <code>invoke</code>.",
 					},
 					{
 						"vers": "v1.3.0",
@@ -186,14 +186,14 @@ router.get('/', function (req, res) {
 						"vers": "v1.0.12, v.1.3.2",
 						"method": "POST",
 						"param": "/api/v1/directplayout",
-						"info": "Populate template and execute a play/continue/stop -command to it. Please note the optional <code>updateRundownItem</code> property. <code>updateRundownItemitemID</code> is an optional object for forcing UI updates and persisting to defined rundown file. <b>Please note: special charaters in values does not work at the moment!</b> Post request body example as JSON:",
+						"info": "Populate a template and execute a <code>play</code>, <code>continue</code> or <code>stop</code> command to it, without a rundown item. <code>relativeTemplatePath</code> is relative to <code>ASSETS/templates</code> and the file must exist there (otherwise <code>404</code>). Targets: <code>webplayoutLayer</code> is a web renderer layer (layers above 5 use layer 5), and <code>casparServer</code>, <code>casparChannel</code> and <code>casparLayer</code> address CasparCG. Give at least one target; use <code>-</code> or leave a target out to skip it. A CasparCG server that is not configured or is disabled in SPX is skipped, and the response lists that in <code>warnings</code>. <code>out</code> is <code>manual</code> (default) or a time in milliseconds, after which the server stops the template. <code>dataformat</code> is optional: <code>json</code> (default) or <code>xml</code>. Special characters in values are supported.<br><br>The optional <code>updateRundownItem</code> object links the playout to a rundown item and requires <code>itemID</code>, <code>project</code> and <code>rundown</code>. With <code>persist</code>, the values and on-air state are saved to that item (play and stop only, not continue). With <code>updateUI</code>, controllers showing that rundown are updated: they reload to show saved values, or, without <code>persist</code>, only the item's on-air indicator is updated. Returns <code>400</code> for an invalid body and <code>404</code> for an unknown template or rundown. Post request body example as JSON:",
 						"code": { casparServer: "OVERLAY", casparChannel: "1", casparLayer: "20", webplayoutLayer: "20", relativeTemplatePath: "/vendor/pack/template.html", out: "manual", DataFields: [{ field: "f0", value: "Firstname" }, { field: "f1", value: "Lastname" }], command: "play", updateRundownItem: { updateUI: true, itemID: "myItemID", persist: true, "project": "myFirstProject", "rundown": "myFirstRundown" } }
 					},
 					{
 						"vers": "v1.1.0",
 						"method": "GET",
 						"param": "/api/v1/controlRundownItemByID?file=MyProject/FirstRundown&item=1234567890&command=play",
-						"info": "Play / stop an item from a known rundown. (Remember you can rename rundown items from SPX GUI)"
+						"info": "Play, continue or stop an item from a known rundown file. <code>file</code> is given as <code>Project/Rundown</code>, <code>item</code> is the rundown item ID and <code>command</code> is <code>play</code>, <code>continue</code> or <code>stop</code>. The rundown does not need to be open in a controller. If it is open, the item plays from the controller's current state and its on-air indicator is updated. If the item's out is a time, the server stops it after that time. Returns <code>400</code> for invalid parameters and <code>404</code> for an unknown rundown or item. (Remember you can rename rundown items from SPX GUI)"
 					},
 					{
 						"vers": "v1.1.1",
@@ -220,7 +220,7 @@ router.get('/', function (req, res) {
 						"vers": "v1.1.1",
 						"method": "GET",
 						"param": "/api/v1/rundown/get",
-						"info": "Returns current rundown as json. "
+						"info": "Returns the rundown currently open in the controller as json, in the same format as the rundown file. Returns <code>404</code> if no rundown is open."
 					},
 					{
 						"vers": "v1.3.0",
