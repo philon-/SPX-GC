@@ -28,6 +28,7 @@ let apiCache = [] // used to cache [undocumented] API calls
 let ack = 'Sent request to SPX server. Acknowledgement is not to be expected.'
 let ack2 = 'Sent request to SPX Controller. Acknowledgement is not to be expected.'
 const apiHandler = require('../utils/api-handlers.js');
+const autoOut = require('../utils/spx_autoout.js');
 
 const notInSolo = {
 	status: 501,
@@ -143,31 +144,27 @@ router.get('/', function (req, res) {
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/play/1234567890",
-						"info": "Start item by ID on the active rundown.",
-            "active": false,
+						"info": "Start item by ID on the active rundown. The command is passed to the open controller, so the response is <code>200</code> even if no controller is open or the ID is not found. To play an item of a given rundown file, use <code>controlRundownItemByID</code>.",
 					},
 
 					{
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/continue/1234567890",
-						"info": "Continue to item by ID on the active rundown. Notice this needs support from the template itself and does not work as play or stop.",
-						"active": false,
+						"info": "Continue to item by ID on the active rundown. Notice this needs support from the template itself and does not work as play or stop. Like play by ID, this is passed to the open controller and always returns <code>200</code>.",
 					},
 
 					{
 						"vers": "1.0",
 						"method": "GET",
 						"param": "/api/v1/item/stop/1234567890",
-						"info": "Stop item by ID on the active rundown.",
-						"active": false,
+						"info": "Stop item by ID on the active rundown. Like play by ID, this is passed to the open controller and always returns <code>200</code>.",
 					},
 					{
 						"vers": "v1.0.12",
 						"method": "GET",
 						"param": "/api/v1/invokeTemplateFunction?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myCustomTemplateFunction&params=Hello%20World",
-						"info": "Uses an invoke handler to call a function in a template. See required parameters in the example call above. JSON objects can be passed as params by urlEncoding stringified JSON. Search SPX Knowledge Base for more info with keyword <code>invoke</code>.",
-						"active": false,
+						"info": "Uses an invoke handler to call a function in a template that is on air. <code>function</code> is required and must be a plain JavaScript function name (letters, digits, <code>_</code> and <code>$</code>). <code>params</code> is optional and is passed to the function as a string; JSON objects can be passed by urlEncoding stringified JSON. Targets: <code>webplayout</code> is a web renderer layer (layers above 5 use layer 5), and <code>playserver</code>, <code>playchannel</code> and <code>playlayer</code> address CasparCG (channel and layer default to 1). Give at least one target; use <code>-</code> or leave a target out to skip it. A CasparCG server that is not configured or is disabled in SPX is skipped, and the response lists that in <code>warnings</code>. Returns <code>400</code> for invalid parameters. Search SPX Knowledge Base for more info with keyword <code>invoke</code>.",
 					},
 					{
 						"vers": "v1.3.0",
@@ -182,23 +179,21 @@ router.get('/', function (req, res) {
 
 			{
 				"section": "Server API",
-				"restriction": "SPX Broadcast license required",
-				"info": "API endpoints targeting the SPX server directly without going through the rundown controller. These endpoints are for advanced uses and require a SPX Broadcast license.",
+				"restriction": "Some endpoints require SPX Broadcast license",
+				"info": "API endpoints targeting the SPX server directly without going through the rundown controller. These endpoints are for advanced uses and some of them require a SPX Broadcast license.",
 				"commands": [
 					{
 						"vers": "v1.0.12, v.1.3.2",
 						"method": "POST",
-						"active": false,
 						"param": "/api/v1/directplayout",
-						"info": "Populate template and execute a play/continue/stop -command to it. Please note the optional <code>updateRundownItem</code> property. <code>updateRundownItemitemID</code> is an optional object for forcing UI updates and persisting to defined rundown file. <b>Please note: special charaters in values does not work at the moment!</b> Post request body example as JSON:",
+						"info": "Populate a template and execute a <code>play</code>, <code>continue</code> or <code>stop</code> command to it, without a rundown item. <code>relativeTemplatePath</code> is relative to <code>ASSETS/templates</code> and the file must exist there (otherwise <code>404</code>). Targets: <code>webplayoutLayer</code> is a web renderer layer (layers above 5 use layer 5), and <code>casparServer</code>, <code>casparChannel</code> and <code>casparLayer</code> address CasparCG. Give at least one target; use <code>-</code> or leave a target out to skip it. A CasparCG server that is not configured or is disabled in SPX is skipped, and the response lists that in <code>warnings</code>. <code>out</code> is <code>manual</code> (default) or a time in milliseconds, after which the server stops the template. <code>dataformat</code> is optional: <code>json</code> (default) or <code>xml</code>. Special characters in values are supported.<br><br>The optional <code>updateRundownItem</code> object links the playout to a rundown item and requires <code>itemID</code>, <code>project</code> and <code>rundown</code>. With <code>persist</code>, the values and on-air state are saved to that item (play and stop only, not continue). With <code>updateUI</code>, controllers showing that rundown are updated: they reload to show saved values, or, without <code>persist</code>, only the item's on-air indicator is updated. Returns <code>400</code> for an invalid body and <code>404</code> for an unknown template or rundown. Post request body example as JSON:",
 						"code": { casparServer: "OVERLAY", casparChannel: "1", casparLayer: "20", webplayoutLayer: "20", relativeTemplatePath: "/vendor/pack/template.html", out: "manual", DataFields: [{ field: "f0", value: "Firstname" }, { field: "f1", value: "Lastname" }], command: "play", updateRundownItem: { updateUI: true, itemID: "myItemID", persist: true, "project": "myFirstProject", "rundown": "myFirstRundown" } }
 					},
 					{
 						"vers": "v1.1.0",
-						"active": false,
 						"method": "GET",
 						"param": "/api/v1/controlRundownItemByID?file=MyProject/FirstRundown&item=1234567890&command=play",
-						"info": "Play / stop an item from a known rundown. (Remember you can rename rundown items from SPX GUI)"
+						"info": "Play, continue or stop an item from a known rundown file. <code>file</code> is given as <code>Project/Rundown</code>, <code>item</code> is the rundown item ID and <code>command</code> is <code>play</code>, <code>continue</code> or <code>stop</code>. The rundown does not need to be open in a controller. If it is open, the item plays from the controller's current state and its on-air indicator is updated. If the item's out is a time, the server stops it after that time. Returns <code>400</code> for invalid parameters and <code>404</code> for an unknown rundown or item. (Remember you can rename rundown items from SPX GUI)"
 					},
 					{
 						"vers": "v1.1.1",
@@ -224,9 +219,8 @@ router.get('/', function (req, res) {
 					{
 						"vers": "v1.1.1",
 						"method": "GET",
-						"active": false,
 						"param": "/api/v1/rundown/get",
-						"info": "Returns current rundown as json. "
+						"info": "Returns the rundown currently open in the controller as json, in the same format as the rundown file. Returns <code>404</code> if no rundown is open."
 					},
 					{
 						"vers": "v1.3.0",
@@ -687,23 +681,123 @@ router.get('/rundown/focusByID/:id', spxAuth.CheckAPIKey, async (req, res) => {
 // }); // end focusByID
 
 
-router.get('/item/play/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-});  // end item play by ID
- 
+// Item commands by ID are executed by the open controller (spx_gc.js handles
+// ItemPlayID / ItemContinueID / ItemStopID), same as the focused-item commands.
+function sendItemCommandByID(APIcmd) {
+	return (req, res) => {
+		let dataOut = {};
+		dataOut.status = 200;
+		dataOut.message = 'OK';
+		dataOut.info = ack2;
+		dataOut.APIcmd = APIcmd;
+		dataOut.itemID = req.params.id;
+		io.emit('SPXMessage2Controller', dataOut);
+		res.status(200).json(dataOut);
+	};
+}
 
-router.get('/item/continue/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-}); // end item continue by ID
+router.get('/item/play/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemPlayID'));
+
+router.get('/item/continue/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemContinueID'));
+
+router.get('/item/stop/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemStopID'));
 
 
-router.get('/item/stop/:id', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
-}); // end item stop by ID
+// Validates playout targets given to an API call: a web renderer layer
+// and/or a CasparCG server, channel and layer. Unknown or disabled CasparCG
+// servers are skipped with a warning. Returns { error } or the targets in
+// playout handler format plus { warnings }.
+function resolvePlayoutTargets({ playserver, playchannel, playlayer, webplayout }) {
+	const warnings = [];
+	const isLayerNumber = (v) => /^\d+$/.test(v) && parseInt(v) >= 1;
+	const str = (v, fallback) => (v === undefined || v === null || String(v).trim() === '' ? fallback : String(v).trim());
+
+	let web = str(webplayout, '-');
+	if (web !== '-') {
+		if (!isLayerNumber(web)) {
+			return { error: 'Web renderer layer must be a positive number or "-", got [' + web + '].' };
+		}
+		if (parseInt(web) > 5) {
+			warnings.push('Web renderer layer ' + web + ' is above 5: the renderer uses layer 5.');
+		}
+	}
+
+	let server = str(playserver, '-');
+	let channel = str(playchannel, '1');
+	let layer = str(playlayer, '1');
+	if (server !== '-') {
+		const configured = (config.casparcg?.servers || []).find(
+			(s) => String(s.name).toLowerCase() === server.toLowerCase()
+		);
+		if (!configured) {
+			warnings.push('CasparCG server [' + server + '] is not configured in SPX, skipped.');
+			server = '-';
+		} else if (configured.disabled == true) {
+			warnings.push('CasparCG server [' + server + '] is disabled in SPX, skipped.');
+			server = '-';
+		} else {
+			server = configured.name;
+			if (!isLayerNumber(channel) || !isLayerNumber(layer)) {
+				return { error: 'CasparCG channel and layer must be positive numbers, got [' + channel + '-' + layer + '].' };
+			}
+		}
+	}
+
+	if (server === '-' && web === '-') {
+		return { error: 'No playout target: give a web renderer layer and/or a configured CasparCG server.', warnings };
+	}
+	return { playserver: server, playchannel: channel, playlayer: layer, webplayout: web, warnings };
+}
 
 
 router.get('/invokeTemplateFunction/', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Calls a function in a template that is already on air.
+	// ?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myFunc&params=Hello%20World
+	const fail = (status, message, warnings) => {
+		logger.warn('invokeTemplateFunction: ' + message);
+		return res.status(status).json({ status, message, warnings });
+	};
+
+	const fn = String(req.query.function || '').trim();
+	// The function name ends up in code run by CasparCG (and by the renderer's
+	// legacy invoke path), so only plain JavaScript identifiers are allowed.
+	if (!/^[A-Za-z_$][\w$]*$/.test(fn)) {
+		return fail(400, 'Parameter function must be a plain JavaScript function name, got [' + fn + '].');
+	}
+	const params = req.query.params === undefined ? '' : String(req.query.params);
+
+	const targets = resolvePlayoutTargets(req.query);
+	if (targets.error) {
+		return fail(400, targets.error, targets.warnings);
+	}
+
+	const result = await runPlayout({
+		prepopulated: 'true',
+		command: 'invoke',
+		dataformat: 'json',
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		function: fn, // web renderer
+		params: params, // web renderer
+		invoke: fn + '(' + JSON.stringify(params) + ')', // CasparCG
+	});
+	if (result.status !== 200) {
+		return fail(500, String(result.body).replace('Error in /gc/playout: ', ''), targets.warnings);
+	}
+
+	res.status(200).json({
+		status: 200,
+		message: 'OK',
+		function: fn,
+		params: params,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		warnings: targets.warnings,
+	});
 }); // end invokeTemplateFunction
 
 
@@ -715,8 +809,202 @@ router.get('/invokeExtensionFunction/', spxAuth.CheckAPIKey, async (req, res) =>
 // SERVER API ----------------------------------------------------------------------------------
 
 router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Plays, continues or stops a template with the given data, without a
+	// rundown item. Optionally the data and on-air state are saved to a
+	// rundown item (updateRundownItem.persist), and controllers showing that
+	// rundown are refreshed (updateRundownItem.updateUI). Body example:
+	// { casparServer, casparChannel, casparLayer, webplayoutLayer,
+	//   relativeTemplatePath, out, DataFields: [{ field, value }], command,
+	//   updateRundownItem: { updateUI, itemID, persist, project, rundown } }
+	const commands = { play: 'play', continue: 'next', next: 'next', stop: 'stop' };
+	const body = req.body;
+	const fail = (status, message, warnings) => {
+		logger.warn('directplayout: ' + message);
+		return res.status(status).json({ status, message, warnings });
+	};
+	if (!body || typeof body !== 'object' || Array.isArray(body)) {
+		return fail(400, 'Request body must be a JSON object.');
+	}
+
+	const command = commands[String(body.command || '').trim().toLowerCase()];
+	if (!command) {
+		return fail(400, 'Property command must be play, continue or stop.');
+	}
+
+	// Template: must be a file inside ASSETS/templates.
+	const templateRoot = path.resolve(spx.getStartUpFolder(), 'ASSETS', 'templates');
+	const relpathIn = String(body.relativeTemplatePath || '').trim().replace(/\\/g, '/');
+	if (!relpathIn) {
+		return fail(400, 'Property relativeTemplatePath is required.');
+	}
+	const templateFile = path.resolve(templateRoot, '.' + path.posix.normalize('/' + relpathIn));
+	const relpath = '/' + path.relative(templateRoot, templateFile).split(path.sep).join('/');
+	if (relpath.startsWith('/..') || !fs.existsSync(templateFile) || !fs.statSync(templateFile).isFile()) {
+		return fail(404, 'Template [' + relpathIn + '] not found in ASSETS/templates.');
+	}
+
+	// Data fields. Played values are cleaned up the same way as rundown item
+	// values; values saved to a rundown item stay raw (see persist below).
+	const dataFields = body.DataFields === undefined ? [] : body.DataFields;
+	if (!Array.isArray(dataFields) || dataFields.some((f) => !f || typeof f !== 'object' || !f.field)) {
+		return fail(400, 'Property DataFields must be an array of { field, value } objects.');
+	}
+	const rawFields = dataFields.map((f) => ({
+		field: String(f.field),
+		value: f.value === undefined || f.value === null ? '' : String(f.value),
+	}));
+	const fields = rawFields.map((f) => ({ field: f.field, value: spx.cleanUpString(f.value) }));
+
+	const targets = resolvePlayoutTargets({
+		playserver: body.casparServer,
+		playchannel: body.casparChannel,
+		playlayer: body.casparLayer,
+		webplayout: body.webplayoutLayer,
+	});
+	if (targets.error) {
+		return fail(400, targets.error, targets.warnings);
+	}
+
+	const spec = {
+		command: command,
+		relpath: relpath,
+		dataformat: body.dataformat === 'xml' ? 'xml' : 'json',
+		targets: targets,
+		out: body.out === undefined || body.out === null ? 'manual' : String(body.out),
+		fields: fields,
+		rawFields: rawFields,
+		link: null,
+	};
+
+	// Optional link to a rundown item.
+	const link = body.updateRundownItem;
+	if (link !== undefined && link !== null) {
+		if (typeof link !== 'object' || !link.itemID || !link.project || !link.rundown) {
+			return fail(400, 'Property updateRundownItem needs itemID, project and rundown.');
+		}
+		const project = String(link.project).trim();
+		const rundown = String(link.rundown).trim();
+		const dataroot = path.resolve(spx.getDatarootFolder());
+		const datafile = path.resolve(dataroot, project, 'data', rundown + '.json');
+		const relative = path.relative(dataroot, datafile);
+		if (/[\\/]/.test(project) || /[\\/]/.test(rundown) || relative.split(path.sep)[0] === '..') {
+			return fail(400, 'Property updateRundownItem has an invalid project or rundown name.');
+		}
+		if (!fs.existsSync(datafile)) {
+			return fail(404, 'Rundown [' + project + '/' + rundown + '] not found.');
+		}
+		const persist = link.persist === true || link.persist === 'true';
+		if (persist && command === 'next') {
+			return fail(400, 'updateRundownItem.persist works with play and stop, not continue.');
+		}
+		spec.link = {
+			project: project,
+			rundown: rundown,
+			datafile: datafile,
+			itemID: String(link.itemID).trim(),
+			persist: persist,
+			updateUI: link.updateUI === true || link.updateUI === 'true',
+		};
+	}
+
+	const result = await runDirectPlayout(spec);
+	if (result.status !== 200) {
+		return fail(result.status, result.message, targets.warnings);
+	}
+
+	res.status(200).json({
+		status: 200,
+		message: 'OK',
+		command: body.command,
+		relativeTemplatePath: relpath,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		warnings: targets.warnings,
+	});
 }); // end directplayout
+
+
+// Plays, continues or stops a validated direct playout (see directplayout).
+// When it plays with a numeric out, the server stops it again by running the
+// same playout with "stop" (as an auto-out: controllers showing the linked
+// rundown get an indicator update instead of a reload). Returns
+// { status, message }.
+async function runDirectPlayout(spec, isAutoOut = false) {
+	const { command, targets, link } = spec;
+	const playoutBody = {
+		prepopulated: 'true',
+		referrer: 'directplayout',
+		autoOutByCaller: true, // auto-out is scheduled below
+		command: command,
+		relpath: spec.relpath,
+		relpathCCG: spec.relpath.split('.htm')[0],
+		dataformat: spec.dataformat,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		out: spec.out,
+		fields: spec.fields,
+	};
+
+	let reload = false;
+	let memoryWasEmpty = false;
+	if (link) {
+		const state = rundownState(link.project, link.rundown);
+		if (link.persist) {
+			// The handler saves into the rundown it has in memory, whichever
+			// that is: only use memory when it is this rundown in an open
+			// controller, otherwise make it read the file.
+			playoutBody.updateRundownItem = { persist: true, project: link.project, rundown: link.rundown, itemID: link.itemID };
+			playoutBody.forceFileReadOnce = !state.isOpen;
+			// The handler saves these to the rundown and cleans them up for playout.
+			playoutBody.fields = spec.rawFields;
+			memoryWasEmpty = Object.keys(state.memory).length === 0;
+			if (link.updateUI && isAutoOut) {
+				// Data unchanged: only the item's on-air indicator.
+				playoutBody.updateRundownItem.updateUI = state.isLoaded;
+			} else if (link.updateUI) {
+				// Controllers show the saved data only after a reload.
+				reload = true;
+			}
+		} else if (link.updateUI && state.isLoaded && command !== 'next') {
+			// Only the item's on-air indicator; only for the loaded rundown,
+			// as duplicated rundowns share item IDs.
+			playoutBody.updateRundownItem = { updateUI: true, itemID: link.itemID };
+		}
+	}
+
+	const result = await runPlayout(playoutBody);
+	if (memoryWasEmpty) {
+		global.rundownData = {};
+	}
+	if (result.status !== 200) {
+		return playoutFailure(result);
+	}
+
+	if (reload) {
+		io.emit('SPXMessage2Controller', { APIcmd: 'RundownReload', project: link.project, rundown: link.rundown });
+	}
+
+	if (command === 'play') {
+		const keys = autoOut.layerKeys(targets);
+		if (link && link.persist) {
+			keys.push(autoOut.itemKey(link.datafile, link.itemID));
+		}
+		scheduleAutoOut(spec.out, keys, 'direct playout of ' + spec.relpath, async () => {
+			if (link && link.persist) {
+				const item = currentRundownItem(link.datafile, link.itemID, rundownState(link.project, link.rundown).isOpen);
+				if (!item || item.onair !== 'true') {
+					return null; // linked item already stopped
+				}
+			}
+			return runDirectPlayout({ ...spec, command: 'stop', fields: [], rawFields: [] }, true);
+		});
+	}
+	return { status: 200, message: 'OK' };
+}
 
 
 router.get('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
@@ -764,13 +1052,187 @@ router.post('/saveCustomJSON', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end saveCustomJSON
 
 
+// Runs the /gc/playout handler (without its login check) with the given
+// request body. Resolves with { status, body } of its response.
+async function runPlayout(body) {
+	let result = { status: 500, body: '' };
+	const playoutRes = {
+		status(code) { result.status = code; return this; },
+		send(data) { result.body = data || ''; return this; },
+	};
+	const { playout } = require('./routes-application.js'); // lazy: loaded after this file
+	await playout({ body: body }, playoutRes);
+	return result;
+}
+
+
 router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Plays, continues or stops an item of a rundown file on the server, so
+	// unlike /item/* this does not need the rundown open in a controller.
+	// ?file=Project/Rundown&item=1234567890&command=play|continue|stop
+	const commands = { play: 'play', continue: 'next', next: 'next', stop: 'stop' };
+	const fail = (status, message) => {
+		logger.warn('controlRundownItemByID: ' + message);
+		return res.status(status).json({ status, message });
+	};
+
+	// String(): repeated query parameters arrive as arrays.
+	const file = (await spx.strip(String(req.query.file || ''))).trim();
+	const itemID = String(req.query.item || '').trim();
+	const command = commands[String(req.query.command || '').trim().toLowerCase()];
+
+	const [project, rundown, ...rest] = file.split('/');
+	if (!project || !rundown || rest.length) {
+		return fail(400, 'Parameter file must be given as Project/Rundown.');
+	}
+	if (!itemID) {
+		return fail(400, 'Parameter item (rundown item ID) is required.');
+	}
+	if (!command) {
+		return fail(400, 'Parameter command must be play, continue or stop.');
+	}
+
+	const dataroot = path.resolve(spx.getDatarootFolder());
+	const datafile = path.resolve(dataroot, project, 'data', rundown + '.json');
+	const relative = path.relative(dataroot, datafile);
+	if (relative.split(path.sep)[0] === '..' || path.isAbsolute(relative)) {
+		return fail(400, 'Rundown [' + file + '] is outside the dataroot folder.');
+	}
+	if (!fs.existsSync(datafile)) {
+		return fail(404, 'Rundown [' + file + '] not found.');
+	}
+
+	const result = await runRundownItemCommand({ project, rundown, datafile, itemID, command });
+	if (result.status !== 200) {
+		return res.status(result.status).json(result);
+	}
+
+	let dataOut = {};
+	dataOut.status = 200;
+	dataOut.message = 'OK';
+	dataOut.file = file;
+	dataOut.item = itemID;
+	dataOut.command = req.query.command;
+	res.status(200).json(dataOut);
 }); // end controlRundownItemByID
 
 
+// Plays, continues or stops an item of a rundown file on the server (see
+// controlRundownItemByID). When it plays an item with a numeric out, the
+// server stops it again after that time, also when the rundown is open in a
+// controller (which runs the same timer: whichever stops it first cancels
+// the other). Returns { status, message }.
+async function runRundownItemCommand({ project, rundown, datafile, itemID, command }) {
+	// If this rundown is open in a controller, its in-memory copy is the
+	// current state: play from it, as a click in that controller would.
+	// Otherwise read the file, and leave the memory as it was.
+	const state = rundownState(project, rundown);
+	const memoryWasEmpty = Object.keys(state.memory).length === 0;
+
+	const result = await runPlayout({
+		datafile: datafile,
+		epoch: itemID,
+		command: command,
+		forceFileReadOnce: !state.isOpen,
+		autoOutByCaller: true, // auto-out is scheduled below
+		// Update the item indicator in controllers showing this rundown.
+		// Only for the loaded rundown (a duplicated rundown shares item
+		// IDs), and not for "next", which the controller would treat as
+		// a play/stop toggle.
+		updateRundownItem: state.isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
+	});
+	if (memoryWasEmpty && !state.isOpen) {
+		global.rundownData = {};
+	}
+	if (result.status !== 200) {
+		return playoutFailure(result);
+	}
+
+	if (command === 'play') {
+		const item = currentRundownItem(datafile, itemID, false); // play saved it to the file
+		if (item) {
+			const keys = [autoOut.itemKey(datafile, itemID), ...autoOut.layerKeys(item)];
+			scheduleAutoOut(item.out, keys, 'rundown item ' + project + '/' + rundown + ' [' + itemID + ']', async () => {
+				const current = currentRundownItem(datafile, itemID, rundownState(project, rundown).isOpen);
+				if (!current || current.onair !== 'true') {
+					return null; // already stopped
+				}
+				return runRundownItemCommand({ project, rundown, datafile, itemID, command: 'stop' });
+			});
+		}
+	}
+	return { status: 200, message: 'OK' };
+}
+
+
+// How a rundown relates to the controller: loaded in memory (the last
+// rundown a controller opened), and open in a connected controller. The
+// memory keeps the rundown after its tab is closed, so "open" also requires
+// a connected controller.
+function rundownState(project, rundown) {
+	const memory = global.rundownData || {};
+	const controllerConnected = [...io.sockets.sockets.values()].some(
+		(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
+	);
+	const isLoaded = memory.project === project && memory.rundown === rundown;
+	return { memory: memory, isLoaded: isLoaded, isOpen: controllerConnected && isLoaded };
+}
+
+
+// A rundown item's current data: from memory when the rundown is open in a
+// controller (its state is the current one), otherwise from the file.
+function currentRundownItem(datafile, itemID, fromMemory) {
+	try {
+		const data = fromMemory ? global.rundownData : JSON.parse(fs.readFileSync(datafile, 'utf8'));
+		return (data.templates || []).find((t) => t.itemID == itemID);
+	} catch (error) {
+		logger.warn('Cannot read item [' + itemID + '] of ' + datafile + ': ' + error);
+		return undefined;
+	}
+}
+
+
+// Turns a failed playout handler response into { status, message }.
+function playoutFailure(result) {
+	const message = String(result.body).replace('Error in /gc/playout: ', '');
+	const status = /not found on the rundown/.test(message) ? 404 : 500;
+	return { status: status, message: message };
+}
+
+
+// Schedules the server-side auto-out of an API playout when `out` is a
+// number of milliseconds. stop() runs when the time is up, unless a play or
+// stop of the same item or on the same layers cancels it first (see
+// utils/spx_autoout.js). stop() resolves with { status, message }, or null
+// when there was nothing to stop.
+function scheduleAutoOut(out, keys, what, stop) {
+	const ms = parseInt(out);
+	if (isNaN(ms) || ms < 0) {
+		return;
+	}
+	logger.verbose('Auto-out of ' + what + ' in ' + ms + ' ms.');
+	autoOut.schedule(keys, ms, async () => {
+		try {
+			const result = await stop();
+			if (!result) {
+				logger.verbose('Auto-out of ' + what + ' skipped: already stopped.');
+			} else if (result.status !== 200) {
+				logger.warn('Auto-out of ' + what + ' failed: ' + result.message);
+			}
+		} catch (error) {
+			logger.error('Auto-out of ' + what + ' failed: ' + error);
+		}
+	});
+}
+
+
 router.get('/rundown/get', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// The rundown currently open in the controller, as kept in memory
+	// (same format as the rundown file).
+	if (!global.rundownData || !global.rundownData.templates) {
+		return res.status(404).json({ status: 404, message: 'No rundown is currently open in SPX controller.' });
+	}
+	res.status(200).json(global.rundownData);
 }); // end get current rundown as JSON
 
 

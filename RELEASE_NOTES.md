@@ -8,6 +8,14 @@
 **⚠ PLEASE UNDERSTAND:** Features and changes below may not fully work as the source code is constantly under development. For a stable and more tested version, please use the published binary releases.
 
 * Fixes a string/bool type error in server.js
+* API: implements play, continue and stop of items by ID (`/api/v1/item/play/:id` etc.)
+* API: implements `GET /api/v1/rundown/get`, which returns the rundown open in the controller
+* API: implements `GET /api/v1/controlRundownItemByID`, which plays, continues or stops an item of a rundown file without the rundown being open in a controller
+* API: implements `GET /api/v1/invokeTemplateFunction`
+* API: implements `POST /api/v1/directplayout`, including `updateRundownItem` with `persist` and `updateUI`
+* API: the server stops API playouts with a numeric out after that time
+* API docs updated for the above
+* Security: updates axios to 1.x, glob to 14 and express-handlebars to 9, forces a fixed ws version (used by osc and jsdom), and replaces the ip package with a built-in helper. `npm audit` reports no vulnerabilities.
 
 
 # Published releases

@@ -37,22 +37,6 @@ html, body {
     cursor: help;
 }
     
-.footerRegister {
-    margin: 0 0.6em;
-    padding: 0.4em 1.0em;
-    border-radius: 0.7em;
-    font-size: 0.7em;
-    text-transform: uppercase;
-    background-color: rgba(3, 139, 37, 0.7);
-    color: rgb(255, 255, 255);
-    text-shadow: 1px 1px 1px rgb(0, 0, 0);
-  }
-
-.footerRegister:hover {
-    background-color: rgba(0, 217, 54, 0.7);
-    color: rgb(255, 255, 255);
-  }
-
 ul {
     padding-left: 2em;
 }
@@ -616,28 +600,6 @@ div.curfolder{
         background-image: url('/img/checker60.png'); /* bgimage for local preview */
         background-size: 10vw;
     }
-
-.registrationDiv {
-    display: block;
-    padding: 0.05em;
-    background-color: rgba(18, 82, 25, 0.604);
-    border-radius: 200px;
-    color: green;
-    border: 2px solid rgba(0, 128, 0, 0.317);
-    text-align: center;
-    font-size: 0.8em;
-    margin-top: 0.8em;
-    opacity: 0.7;
-    transition: all 0.3s ease-in-out;
-}
-
-.registrationDiv:hover {
-    border: 2px solid orange;
-    background-color: rgba(12, 132, 6, 0.441);
-    transform: scale(0.98);
-    transition: all 0.3s ease-in-out;
-    opacity: 1.0;
-}
 
 .right {
     margin-left: 60%;

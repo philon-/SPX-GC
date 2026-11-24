@@ -30,7 +30,7 @@ const bodyParser = require('body-parser')
 const cors = require('cors')
 const exphbs = require('express-handlebars')
 const app = express()
-const ip = require('ip')
+const ip = require('./utils/spx_ip.js')
 const fs = require('fs')
 const morgan = require('morgan')
 const path = require('path')
@@ -490,7 +490,7 @@ app.engine('handlebars', exphbs.engine({
 
     // Returns IP for socket server of this app's IP address
     getServerAddress: function () {
-      var ip = require('ip');
+      var ip = require('./utils/spx_ip.js');
       var myIP = ip.address() + ':' + port;
       return myIP;
     },
@@ -871,13 +871,9 @@ var server = app.listen(port, (err) => {
   }
 
   splash +=
-  `\n  Explore SPX Graphics related resources:` +  
-  `\n  + Homepage ................ https://spxgraphics.com` +  
-  `\n  + Knowledge Base .......... https://docs.spxgraphics.com` +  
-  `\n  + SPX in the Cloud ........ https://spxcloud.app` + 
-  `\n  + SPX Graphics for Zoom ... https://spxzoom.com` +
+  `\n  + Knowledge Base .......... https://docs.spxgraphics.com` +
   `\n` +
-  `\n  This is SPX Solo. For professional features and support\n  options see SPX Production and SPX Broadcast.`;
+  `\n  This is a fork of SPX Graphics Controller. Original source code licensed under MIT by Tuomo Kulomaa & SPX Graphics.`;
 
   console.log(splash);
 

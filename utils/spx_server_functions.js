@@ -8,8 +8,7 @@ const moment = require('moment');
 const wavplayer = require('node-wav-player');
 const PlayoutCCG = require('./playout_casparCG.js');
 const glob = require("glob");
-const ip = require('ip')
-const axios = require('axios')
+const ip = require('./spx_ip.js')
 const http = require('http');
 // ----------------------------------------- good until here
 // const { config } = require('process');
@@ -61,25 +60,13 @@ module.exports = {
     }
     let fldrname = path.dirname(fullpath);
     let rundname = path.basename(fullpath).replace('.json', '');
-    let pathItems = fldrname.split('\\');  // Works on all platforms?
+    let pathItems = fldrname.split(/[\\/]/); // Windows and POSIX separators
     let project = pathItems[pathItems.length-2];
     rundownData.project = project
     rundownData.rundown = rundname
     return rundownData
   },
 
-
-  httpGet: function (url) {
-    // A generic http/get sender utility
-    // used by heartbeat pusher (and OSC)
-    axios.get(url)
-    .then(function (response) {
-      return response
-    })
-    .catch(function (error) {
-      logger.error('spx_server_functions httpGet: ' + error);
-    });
-  }, // httpGet
 
 
   httpPost: function (JSONdata, endPoint) {
@@ -307,7 +294,6 @@ module.exports = {
 
   getNotificationsMiddleware: async function(req,res,next) {
     logger.verbose('DEPRECATION WARNING. spx.getNotificationsMiddleware() will be removed in future version.');
-    // Please note! Below code is duplicated! See spx.collectSPXInfo.
     // This will probably be removed completely in v1.1.1
     try {
       datarootSize()
@@ -459,12 +445,12 @@ module.exports = {
     switch (ddmm) {
       case '31-12':
       case '01-01':
-        greet = 'Happy New Year from <A target="egg" href="http://spxgraphics.com">SPX Graphics</A>!';
+        greet = 'Happy New Year from SPX Graphics!';
         image = 'new-year-sparks.png';
         break;
 
       case '08-03':
-        greet = 'Happy Women\'s Day from <A target="egg" href="http://spxgraphics.com">SPX Graphics</A>!';
+        greet = 'Happy Women\'s Day from SPX Graphics!';
         image = 'rose.png';
         break;
 
@@ -496,7 +482,7 @@ module.exports = {
       case '24-12':
       case '25-12':
       case '26-12':
-        greet = 'Merry Christmas from <A href="http://spxgraphics.com">SPX Graphics</A>!';
+        greet = 'Merry Christmas from SPX Graphics!';
         image = 'animated-santa.png';
         break;
 
@@ -1029,27 +1015,6 @@ module.exports = {
       logger.error('spx.writeFile - Error while saving: ' + filepath + ': ' + error);    
     }
   }, // writeTextFile (other)
-
-  collectSPXInfo: async function (from='') {
-    return new Promise(resolve => {
-      try {
-        datarootSize()
-        .then(function(sizeArr) {
-          let paramstring =""
-          paramstring += "v="  + vers 
-          paramstring += "&o=" + lPad(process.platform, 8, ".")
-          paramstring += "&p=" + lPad(sizeArr[0],5, "0") 
-          paramstring += "&r=" + lPad(sizeArr[1],5, "0") 
-          paramstring += "&h=" + global.pmac
-          resolve(paramstring)
-        })
-      }
-      catch (error) {
-          logger.error('Error in collectSPXInfo: ' + error);
-          return([0,0])
-      }
-    })
-  } // collectSPXInfo
 
 
 } // end of exports (spx.)

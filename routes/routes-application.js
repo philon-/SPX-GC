@@ -14,13 +14,13 @@ const spx = require('../utils/spx_server_functions.js');
 const cfg = require('../utils/spx_getconf.js');
 const PlayoutCCG = require('../utils/playout_casparCG.js');
 const PlayoutWEB = require('../utils/playout_webplayer.js');
+const autoOut = require('../utils/spx_autoout.js');
 const spxAuth = require('../utils/spx_auth.js');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 const cors = require('cors');
 const { timeStamp } = require("console");
 const http = require('http');
-const axios = require('axios');
 
 // ROOT ROUTES ----------------------------------------------------------------------------------------------
 
@@ -243,64 +243,6 @@ router.post('/config', spxAuth.CheckLogin, async (req, res) => {
 
 
 }); // post /config end
-
-router.get('/register', cors(), spxAuth.CheckLogin, async (req, res) => {
-	// show application config (send global.config as "config" data to the view, see options object below)
-	await SaveRundownDataToDisc(); // Added in 1.0.15
-	let recents = config.general.recents || [] // added in 1.1.0
-	let disableConfigUI = config.general.disableConfigUI || false // added in 1.1.1
-	res.render('view-registration', {
-		layout: false,
-		config: config,
-		user: req.session.user,
-		configfile: configfileref,
-	});
-}); // get /register end
-
-router.post('/register', async (req, res) => {
-	// Handles modification changes of registratiom.
-	// Request: form data as JSON
-	// Returns: Ajax response
-	logger.verbose('Saving registration [' + + '] in rundown [' + req.body.rundownfile + '] with updated values.');
-	try {
-
-		if (!config.registration) {
-			config.registration = {};
-		}
-
-		config.registration.updated = new Date().toISOString();
-		config.registration.country = req.body.country;
-		config.registration.indus = req.body.indus;
-		config.registration.usage = req.body.usage
-		config.registration.devlevel = req.body.skill
-		config.registration.freetext = req.body.freetext
-		config.registration.email = req.body.email
-		if (req.body.inviteDiscord == "on") {
-			config.registration.discord = true
-		} else {
-			config.registration.discord = false
-		}
-		if (req.body.newsletter == "on") {
-			config.registration.newsletter = true
-		} else {
-			config.registration.newsletter = false
-		}
-		await spx.writeFile(global.configfileref, config);
-
-		config.registration.platform = req.body.platform;
-		config.registration.task = req.body.task;
-
-		await axios.post('https://spx-formbot-1093142801465.us-central1.run.app/api/submit', config.registration);
-		req.session.showMessage = 'Thank you for the registration! 👍';
-		res.redirect('/');
-
-	} catch (error) {
-		console.error('ERROR', error);
-		let errmsg = 'Server error in /register [' + error + ']';
-		logger.error(errmsg);
-		res.status(500).send(errmsg)  // error 500 AJAX RESPONSE
-	};
-}); // post /register end
 
 router.get('/shows', cors(), spxAuth.CheckLogin, async (req, res) => {
 	// show list of shows (folders)
@@ -1277,7 +1219,7 @@ router.post('/gc/:foldername/:filename/', spxAuth.CheckLogin, async (req, res) =
 	}
 }); // gc post end
 
-router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
+async function playout(req, res) {
 	// Request: data object (command, datafile, templateIndex)
 	// Returns: AJAX response
 	//
@@ -1436,7 +1378,11 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 					})
 				}
 			});
-			dataOut = req.body; // override data for rendering
+			// Rundown files keep raw values (as above); clean them up for
+			// rendering, as is done for rundown items.
+			dataOut = Object.assign({}, req.body, {
+				fields: (req.body.fields || []).map((f) => ({ field: f.field, value: spx.cleanUpString(String(f.value ?? '')) })),
+			});
 		}
 
 
@@ -1527,8 +1473,9 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 					});
 				}
 
-				// API Call executed. Should we set an autostop?
-				if (forceDiskRead || req.body.referrer == 'directplayout') {
+				// API Call executed. Should we set an autostop? (Not when the
+				// API route handles auto-out itself, see utils/spx_autoout.js.)
+				if ((forceDiskRead || req.body.referrer == 'directplayout') && !req.body.autoOutByCaller) {
 					let numeric = parseInt(dataOut.out);
 					if (isNaN(numeric)) {
 						logger.verbose('API call: out was not a number, skipping autostop.');
@@ -1544,7 +1491,8 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 			// == NEXT / aka CONTINUE  =====================================
 			case 'next':
 
-				if (dataOut.playserver != '-' || dataOut.webplayout != '-') {
+				// Prepopulated playouts have no rundown item to mark on air.
+				if ((dataOut.playserver != '-' || dataOut.webplayout != '-') && RundownData.templates?.[templateIndex]) {
 					RundownData.templates[templateIndex].onair = 'true';
 				}
 
@@ -1624,6 +1572,16 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 				break;
 		}
 
+		// A play or stop replaces any pending API auto-out of this item or on
+		// these layers (see utils/spx_autoout.js).
+		if (playOutCommand == 'play' || playOutCommand == 'stop') {
+			let autoOutKeys = autoOut.layerKeys(dataOut);
+			if (itemID && templateIndex > -1) {
+				autoOutKeys.push(autoOut.itemKey(RundownFile, itemID));
+			}
+			autoOut.cancel(autoOutKeys);
+		}
+
 		// Added in 1.3.2 / updateRundownItem in the UI if set
 		if (req.body?.updateRundownItem?.updateUI) {
 			logger.verbose('API call: updateRundownItem in the UI.');
@@ -1636,20 +1594,24 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 		}
 
 		// persist to memory and to disk
-		RundownData.updated = new Date().toISOString();
-		RundownData = await spx.appendProjectFile(RundownData, RundownFile, "from gc/playout");
-		global.rundownData = RundownData // memory only
-		if (playOutCommand == 'play' || playOutCommand == 'stop') {
+		// Prepopulated playouts (no rundown item behind them) have no rundown
+		// data: leave the in-memory rundown of the controller untouched.
+		if (RundownData && RundownData.templates) {
+			RundownData.updated = new Date().toISOString();
+			RundownData = await spx.appendProjectFile(RundownData, RundownFile, "from gc/playout");
+			global.rundownData = RundownData // memory only
+			if (playOutCommand == 'play' || playOutCommand == 'stop') {
 
-			if (req.body?.updateRundownItem?.persist) {
-				preventSave = false;
-			}
+				if (req.body?.updateRundownItem?.persist) {
+					preventSave = false;
+				}
 
-			if (preventSave) {
-				logger.verbose('preventSave enabled, no need to persist to disk.');
-			} else {
-				logger.verbose('Persisting rundown data to disk....');
-				await spx.writeFile(RundownFile, RundownData);
+				if (preventSave) {
+					logger.verbose('preventSave enabled, no need to persist to disk.');
+				} else {
+					logger.verbose('Persisting rundown data to disk....');
+					await spx.writeFile(RundownFile, RundownData);
+				}
 			}
 		}
 
@@ -1677,7 +1639,9 @@ router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
 		logger.error('ERROR in /gc/playout. ' + error);
 		res.status(500).send('Error in /gc/playout: ' + error)  // error 500 AJAX RESPONSE
 	};
-}); // playout ended
+} // playout ended
+
+router.post('/gc/playout', spxAuth.CheckLogin, playout);
 
 
 router.post('/gc/playaudio', spxAuth.CheckLogin, (req, res) => {
@@ -2311,3 +2275,7 @@ function getResolutionFromConfig(cfg, postRequest) {
 
 
 module.exports = router;
+
+// The playout handler without the login check, for API routes that run
+// rundown items on the server (see /api/v1/controlRundownItemByID).
+module.exports.playout = playout;

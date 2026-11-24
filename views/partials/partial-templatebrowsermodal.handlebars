@@ -34,7 +34,6 @@
       <button id="formatOGRAF" class="tablinks {{#ifValue showconfig.projectFormat "OGRAF"}}tabSelected{{/ifValue}}">OGRAF</button>
       
       <div>
-        <button onclick="AddTemplatesTab(2)" id="tabBtn2" class="tablinks">SPX Store</button>
         <button onclick="AddTemplatesTab(3)" id="tabBtn3" class="tablinks">Loopic</button>
         <button onclick="AddTemplatesTab(4)" id="tabBtn4" class="tablinks">Ferryman</button>
       </div>
@@ -57,10 +56,6 @@
       </div>
 
       <div class="modal_bottom">
-        <div class="storeIcon"
-          onmouseover="showMessage('Visit SPX Store for more templates')"
-          onclick="window.open('https://spxgraphics.com/store', '_blank');"
-          ></div>
         <div style="flex-grow: 1;" >
           <span id="browserMessage" class="browserMessage"></span>
         </div>
@@ -77,47 +72,6 @@
       </div>
     </div>
 
-
-    <div style="display: none;" id="tab2">
-      <div class="promoBox">
-        <div class="promoBoxCols">
-          <div class="promoLeft">
-            <div class="promoBoxHead">More graphics and plugins</div>
-            <p>
-              SPX Store is SPX Graphics' official Store for free and premium SPX
-              templates and application extensions.</p>
-            <br>
-            ▶ <a href="https://spxgraphics.com/store" target="store">spxgraphics.com/store</a>
-            <br>
-            <h2>Creative Services</h2>
-            <p>
-              SPX Graphics offers creative services for businesses.
-              Our team of designers and developers
-              can help you with your next project. 
-            </p>
-            <br>
-            <ul>
-              <li>Custom templates and Extensions</li>
-              <li>Workflow development</li>
-              <li>System integrations</li>
-              <li>SLA and Support</li>
-            </ul>
-            <br>
-            ▶ <a href="https://spxgraphics.com/contact" target="_blank">Get in touch</a>
-
-
-          </div>
-          <div class="promoRight">
-            <img src="/img/SPXstore600_2023_240px.png" alt="SPX Store" title="SPX Store">
-            <a href="/img/promo-store.png" target="_blank">
-              <img src="/img/promo-store.png"
-                  alt="SPX Store screenshot"
-                  border=0>
-            </a>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <div style="display: none;" id="tab3">
             <div class="promoBox">
