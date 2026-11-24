@@ -77,3 +77,42 @@ describe('POST /gc/playout from the controller', () => {
     assert.match(await res.text(), /not found/);
   });
 });
+
+// Prepopulated playouts carry all template data in the request, without a
+// rundown item behind them (used e.g. by extension buttons).
+describe('POST /gc/playout with prepopulated data', () => {
+  let spx;
+  before(async () => {
+    spx = await startServer();
+    assert.equal((await fetch(`${spx.baseUrl}/gc/MyFirstProject/MyFirstRundown`)).status, 200);
+  });
+  after(async () => {
+    await spx?.stop();
+  });
+
+  it('plays the template and leaves the open rundown in memory', async () => {
+    const msg = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'playTemplate');
+    const res = await fetch(`${spx.baseUrl}/gc/playout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prepopulated: 'true',
+        command: 'play',
+        relpath: '/softpix/html/Template_Pack_1.4.0/INFO_LEFT.html',
+        playserver: '-',
+        playchannel: '1',
+        playlayer: '10',
+        webplayout: '10',
+        dataformat: 'json',
+        fields: [{ field: 'f0', value: 'From an extension' }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await msg).fields, [{ f0: 'From an extension' }]);
+
+    // Regression: the in-memory rundown was replaced with an empty string.
+    const open = await fetch(`${spx.baseUrl}/api/v1/rundown/get`);
+    assert.equal(open.status, 200);
+    assert.equal((await open.json()).rundown, 'MyFirstRundown');
+  });
+});

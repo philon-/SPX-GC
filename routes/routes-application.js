@@ -1636,20 +1636,24 @@ async function playout(req, res) {
 		}
 
 		// persist to memory and to disk
-		RundownData.updated = new Date().toISOString();
-		RundownData = await spx.appendProjectFile(RundownData, RundownFile, "from gc/playout");
-		global.rundownData = RundownData // memory only
-		if (playOutCommand == 'play' || playOutCommand == 'stop') {
+		// Prepopulated playouts (no rundown item behind them) have no rundown
+		// data: leave the in-memory rundown of the controller untouched.
+		if (RundownData && RundownData.templates) {
+			RundownData.updated = new Date().toISOString();
+			RundownData = await spx.appendProjectFile(RundownData, RundownFile, "from gc/playout");
+			global.rundownData = RundownData // memory only
+			if (playOutCommand == 'play' || playOutCommand == 'stop') {
 
-			if (req.body?.updateRundownItem?.persist) {
-				preventSave = false;
-			}
+				if (req.body?.updateRundownItem?.persist) {
+					preventSave = false;
+				}
 
-			if (preventSave) {
-				logger.verbose('preventSave enabled, no need to persist to disk.');
-			} else {
-				logger.verbose('Persisting rundown data to disk....');
-				await spx.writeFile(RundownFile, RundownData);
+				if (preventSave) {
+					logger.verbose('preventSave enabled, no need to persist to disk.');
+				} else {
+					logger.verbose('Persisting rundown data to disk....');
+					await spx.writeFile(RundownFile, RundownData);
+				}
 			}
 		}
 
