@@ -3,14 +3,24 @@
 // controller reacts to API calls (e.g. a Companion button press).
 //
 // The embedded preview renderer frame is not loaded: it is not needed for
-// controller behaviour and would register as an extra renderer.
+// controller behaviour and would register as an extra renderer. The tooltip
+// library is replaced by a stand-in (see TestResourceLoader).
 
 const { JSDOM, ResourceLoader, VirtualConsole } = require('jsdom');
 
-class NoRendererLoader extends ResourceLoader {
+// jsdom's selector engine cannot handle the tooltip library, which makes
+// the controller's main inline script stop at its first line; a no-op
+// stand-in keeps the rest of the page running as in a browser.
+const TOOLTIP_STUB = 'window.Tooltip = function Tooltip() {};';
+
+class TestResourceLoader extends ResourceLoader {
   fetch(url, options) {
-    if (/\/renderer\b/.test(new URL(url).pathname)) {
+    const pathname = new URL(url).pathname;
+    if (/\/renderer\b/.test(pathname)) {
       return Promise.resolve(Buffer.from('<!doctype html><html><body></body></html>'));
+    }
+    if (pathname === '/js/vanilla-js-tooltip.js') {
+      return Promise.resolve(Buffer.from(TOOLTIP_STUB));
     }
     return super.fetch(url, options);
   }
@@ -31,7 +41,7 @@ async function openController(baseUrl, project, rundown) {
 
   const dom = await JSDOM.fromURL(`${baseUrl}/gc/${project}/${rundown}`, {
     runScripts: 'dangerously',
-    resources: new NoRendererLoader(),
+    resources: new TestResourceLoader(),
     pretendToBeVisual: true,
     virtualConsole,
   });

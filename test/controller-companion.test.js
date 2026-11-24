@@ -71,6 +71,20 @@ describe('Companion actions with an open controller', () => {
     assert.equal(plays.length, 1, 'the controller must not play the item a second time');
   });
 
+  it('is recognised as open, so controlRundownItem plays from its state', async () => {
+    // Regression: the page could connect before registering its identify
+    // handler, and then never told the server it is a controller.
+    const untouched = '1773083297694'; // NAME_RIGHT, not used by other tests
+    const res = await companionAction(spx.port, 'controlRundownItem', {
+      file: 'MyFirstProject/MyFirstRundown',
+      id: untouched,
+      command: 'play',
+    });
+    assert.equal(res.status, 200);
+    const memory = await (await fetch(`${spx.baseUrl}/api/v1/rundown/get`)).json();
+    assert.equal(memory.templates.find((t) => t.itemID === untouched).onair, 'true');
+  });
+
   it('openRundown makes the controller navigate to the rundown', async () => {
     const before = gc.reloads();
     const res = await companionAction(spx.port, 'openRundown', { rundown: 'MyFirstProject/MySecondRundown' });
