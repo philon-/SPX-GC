@@ -10,7 +10,7 @@ const logger = require('../utils/logger');
 logger.debug('Caspar-route loading...');
 const spx = require('../utils/spx_server_functions.js');
 
-const ip = require('ip')
+const ip = require('../utils/spx_ip.js')
 const ipad = ip.address(); // my ip address
 const port = config.general.port || 5656;
 

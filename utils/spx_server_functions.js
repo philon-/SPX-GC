@@ -8,7 +8,7 @@ const moment = require('moment');
 const wavplayer = require('node-wav-player');
 const PlayoutCCG = require('./playout_casparCG.js');
 const glob = require("glob");
-const ip = require('ip')
+const ip = require('./spx_ip.js')
 const axios = require('axios')
 const http = require('http');
 // ----------------------------------------- good until here

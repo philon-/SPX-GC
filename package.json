@@ -26,14 +26,13 @@
   "author": "Tuomo Kulomaa <tuomo@spxgraphics.com> (https://spxgraphics.com)",
   "license": "MIT",
   "dependencies": {
-    "axios": "^0.30.0",
+    "axios": "^1.21.1",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "express-handlebars": "^8.0.1",
+    "express-handlebars": "^9.0.4",
     "express-session": "^1.18.1",
-    "glob": "^11.0.0",
-    "ip": "^2.0.1",
+    "glob": "^14.0.4",
     "jsdom": "^25.0.1",
     "macaddress": "^0.5.1",
     "moment": "^2.29.4",
@@ -54,5 +53,8 @@
     "@yao-pkg/pkg": "6.26.0",
     "nodemon": "^3.1.7",
     "socket.io-client": "4.8.1"
+  },
+  "overrides": {
+    "ws": "^8.22.2"
   }
 }

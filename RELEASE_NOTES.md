@@ -15,6 +15,7 @@
 * API: implements `POST /api/v1/directplayout`, including `updateRundownItem` with `persist` and `updateUI`
 * API: the server stops API playouts with a numeric out after that time
 * API docs updated for the above
+* Security: updates axios to 1.x, glob to 14 and express-handlebars to 9, forces a fixed ws version (used by osc and jsdom), and replaces the ip package with a built-in helper. `npm audit` reports no vulnerabilities.
 
 
 # Published releases

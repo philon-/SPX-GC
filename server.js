@@ -30,7 +30,7 @@ const bodyParser = require('body-parser')
 const cors = require('cors')
 const exphbs = require('express-handlebars')
 const app = express()
-const ip = require('ip')
+const ip = require('./utils/spx_ip.js')
 const fs = require('fs')
 const morgan = require('morgan')
 const path = require('path')
@@ -490,7 +490,7 @@ app.engine('handlebars', exphbs.engine({
 
     // Returns IP for socket server of this app's IP address
     getServerAddress: function () {
-      var ip = require('ip');
+      var ip = require('./utils/spx_ip.js');
       var myIP = ip.address() + ':' + port;
       return myIP;
     },
