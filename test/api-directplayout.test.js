@@ -176,6 +176,22 @@ describe('directplayout saving to a rundown item', () => {
     assert.deepEqual((await collecting).filter((d) => d.APIcmd === 'RundownReload'), []);
   });
 
+  it('saves raw values and plays them cleaned up once, now and when replayed', async () => {
+    const text = `Rock & Roll's "night"`;
+    const cleaned = 'Rock &amp; Roll&#039;s &quot;night&quot;';
+    const direct1 = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'playTemplate');
+    const res = await direct(spx, persist({ DataFields: [{ field: 'f0', value: text }] }));
+    assert.equal(res.status, 200);
+    assert.deepEqual((await direct1).fields, [{ f0: cleaned }]);
+    assert.equal(f0(readItem(spx, 'MyFirstRundown', ITEM)), text);
+
+    // Played later as a normal rundown item.
+    const replay = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'playTemplate');
+    const again = await fetch(`${spx.baseUrl}/api/v1/controlRundownItemByID?file=MyFirstProject/MyFirstRundown&item=${ITEM}&command=play`);
+    assert.equal(again.status, 200);
+    assert.equal((await replay).fields.find((f) => 'f0' in f).f0, cleaned);
+  });
+
   it('stop saves the item as off-air', async () => {
     assert.equal((await direct(spx, persist({ command: 'stop' }))).status, 200);
     assert.equal(readItem(spx, 'MyFirstRundown', ITEM).onair, 'false');

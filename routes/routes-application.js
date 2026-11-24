@@ -1436,7 +1436,11 @@ async function playout(req, res) {
 					})
 				}
 			});
-			dataOut = req.body; // override data for rendering
+			// Rundown files keep raw values (as above); clean them up for
+			// rendering, as is done for rundown items.
+			dataOut = Object.assign({}, req.body, {
+				fields: (req.body.fields || []).map((f) => ({ field: f.field, value: spx.cleanUpString(String(f.value ?? '')) })),
+			});
 		}
 
 

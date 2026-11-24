@@ -842,15 +842,17 @@ router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
 		return fail(404, 'Template [' + relpathIn + '] not found in ASSETS/templates.');
 	}
 
-	// Data fields, cleaned up the same way as rundown item values.
+	// Data fields. Played values are cleaned up the same way as rundown item
+	// values; values saved to a rundown item stay raw (see persist below).
 	const dataFields = body.DataFields === undefined ? [] : body.DataFields;
 	if (!Array.isArray(dataFields) || dataFields.some((f) => !f || typeof f !== 'object' || !f.field)) {
 		return fail(400, 'Property DataFields must be an array of { field, value } objects.');
 	}
-	const fields = dataFields.map((f) => ({
+	const rawFields = dataFields.map((f) => ({
 		field: String(f.field),
-		value: spx.cleanUpString(f.value === undefined || f.value === null ? '' : String(f.value)),
+		value: f.value === undefined || f.value === null ? '' : String(f.value),
 	}));
+	const fields = rawFields.map((f) => ({ field: f.field, value: spx.cleanUpString(f.value) }));
 
 	const targets = resolvePlayoutTargets({
 		playserver: body.casparServer,
@@ -914,6 +916,8 @@ router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
 			// controller, otherwise make it read the file.
 			playoutBody.updateRundownItem = { persist: true, project: project, rundown: rundown, itemID: itemID };
 			playoutBody.forceFileReadOnce = !isOpen;
+			// The handler saves these to the rundown and cleans them up for playout.
+			playoutBody.fields = rawFields;
 			if (Object.keys(memory).length === 0) restoreMemory = {};
 			if (link.updateUI === true || link.updateUI === 'true') {
 				// Controllers show the saved data only after a reload.
