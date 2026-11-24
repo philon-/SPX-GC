@@ -61,7 +61,7 @@ module.exports = {
     }
     let fldrname = path.dirname(fullpath);
     let rundname = path.basename(fullpath).replace('.json', '');
-    let pathItems = fldrname.split('\\');  // Works on all platforms?
+    let pathItems = fldrname.split(/[\\/]/); // Windows and POSIX separators
     let project = pathItems[pathItems.length-2];
     rundownData.project = project
     rundownData.rundown = rundname

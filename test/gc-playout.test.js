@@ -42,6 +42,14 @@ describe('POST /gc/playout from the controller', () => {
     assert.equal(item.onair, 'true');
   });
 
+  it('keeps the project and rundown name of the in-memory rundown', async () => {
+    // Regression: on macOS/Linux the project became undefined after a
+    // playout, because the rundown path was only split on backslashes.
+    const rundown = await (await fetch(`${spx.baseUrl}/api/v1/rundown/get`)).json();
+    assert.equal(rundown.project, 'MyFirstProject');
+    assert.equal(rundown.rundown, 'MyFirstRundown');
+  });
+
   it('next sends nextTemplate to the web renderer', async () => {
     const msg = spx.listener.next('SPXMessage2Client', (d) => d.spxcmd === 'nextTemplate');
     const res = await playout('next');
