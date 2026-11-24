@@ -164,7 +164,6 @@ router.get('/', function (req, res) {
 						"method": "GET",
 						"param": "/api/v1/invokeTemplateFunction?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myCustomTemplateFunction&params=Hello%20World",
 						"info": "Uses an invoke handler to call a function in a template. See required parameters in the example call above. JSON objects can be passed as params by urlEncoding stringified JSON. Search SPX Knowledge Base for more info with keyword <code>invoke</code>.",
-						"active": false,
 					},
 					{
 						"vers": "v1.3.0",
@@ -704,8 +703,101 @@ router.get('/item/continue/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemC
 router.get('/item/stop/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemStopID'));
 
 
+// Validates playout targets given to an API call: a web renderer layer
+// and/or a CasparCG server, channel and layer. Unknown or disabled CasparCG
+// servers are skipped with a warning. Returns { error } or the targets in
+// playout handler format plus { warnings }.
+function resolvePlayoutTargets({ playserver, playchannel, playlayer, webplayout }) {
+	const warnings = [];
+	const isLayerNumber = (v) => /^\d+$/.test(v) && parseInt(v) >= 1;
+	const str = (v, fallback) => (v === undefined || v === null || String(v).trim() === '' ? fallback : String(v).trim());
+
+	let web = str(webplayout, '-');
+	if (web !== '-') {
+		if (!isLayerNumber(web)) {
+			return { error: 'Web renderer layer must be a positive number or "-", got [' + web + '].' };
+		}
+		if (parseInt(web) > 5) {
+			warnings.push('Web renderer layer ' + web + ' is above 5: the renderer uses layer 5.');
+		}
+	}
+
+	let server = str(playserver, '-');
+	let channel = str(playchannel, '1');
+	let layer = str(playlayer, '1');
+	if (server !== '-') {
+		const configured = (config.casparcg?.servers || []).find(
+			(s) => String(s.name).toLowerCase() === server.toLowerCase()
+		);
+		if (!configured) {
+			warnings.push('CasparCG server [' + server + '] is not configured in SPX, skipped.');
+			server = '-';
+		} else if (configured.disabled == true) {
+			warnings.push('CasparCG server [' + server + '] is disabled in SPX, skipped.');
+			server = '-';
+		} else {
+			server = configured.name;
+			if (!isLayerNumber(channel) || !isLayerNumber(layer)) {
+				return { error: 'CasparCG channel and layer must be positive numbers, got [' + channel + '-' + layer + '].' };
+			}
+		}
+	}
+
+	if (server === '-' && web === '-') {
+		return { error: 'No playout target: give a web renderer layer and/or a configured CasparCG server.', warnings };
+	}
+	return { playserver: server, playchannel: channel, playlayer: layer, webplayout: web, warnings };
+}
+
+
 router.get('/invokeTemplateFunction/', spxAuth.CheckAPIKey, async (req, res) => {
-	res.status(501).json(notInSolo);
+	// Calls a function in a template that is already on air.
+	// ?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myFunc&params=Hello%20World
+	const fail = (status, message, warnings) => {
+		logger.warn('invokeTemplateFunction: ' + message);
+		return res.status(status).json({ status, message, warnings });
+	};
+
+	const fn = String(req.query.function || '').trim();
+	// The function name ends up in code run by CasparCG (and by the renderer's
+	// legacy invoke path), so only plain JavaScript identifiers are allowed.
+	if (!/^[A-Za-z_$][\w$]*$/.test(fn)) {
+		return fail(400, 'Parameter function must be a plain JavaScript function name, got [' + fn + '].');
+	}
+	const params = req.query.params === undefined ? '' : String(req.query.params);
+
+	const targets = resolvePlayoutTargets(req.query);
+	if (targets.error) {
+		return fail(400, targets.error, targets.warnings);
+	}
+
+	const result = await runPlayout({
+		prepopulated: 'true',
+		command: 'invoke',
+		dataformat: 'json',
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		function: fn, // web renderer
+		params: params, // web renderer
+		invoke: fn + '(' + JSON.stringify(params) + ')', // CasparCG
+	});
+	if (result.status !== 200) {
+		return fail(500, String(result.body).replace('Error in /gc/playout: ', ''), targets.warnings);
+	}
+
+	res.status(200).json({
+		status: 200,
+		message: 'OK',
+		function: fn,
+		params: params,
+		playserver: targets.playserver,
+		playchannel: targets.playchannel,
+		playlayer: targets.playlayer,
+		webplayout: targets.webplayout,
+		warnings: targets.warnings,
+	});
 }); // end invokeTemplateFunction
 
 

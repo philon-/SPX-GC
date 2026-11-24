@@ -26,13 +26,40 @@ const URLS = {
   openRundown: (h, p, opt) => `http://${h}:${p}/api/v1/rundown/load?file=${opt.rundown}`,
   controlRundownItem: (h, p, opt) =>
     `http://${h}:${p}/api/v1/controlRundownItemByID?file=${opt.file}&item=${opt.id}&command=${opt.command}`,
+
+  // Not working in module v2.0.1 (it throws a ReferenceError before sending).
+  // This is the request of the patched module: the action's options, URL
+  // encoded.
+  invokeTemplateFunction: (h, p, opt) => {
+    const q = new URLSearchParams({
+      playserver: opt.playserver,
+      playchannel: opt.playchannel,
+      playlayer: opt.playlayer,
+      webplayout: opt.webplayout,
+      function: opt.customFunction,
+      params: opt.params,
+    });
+    return `http://${h}:${p}/api/v1/invokeTemplateFunction?${q}`;
+  },
+};
+
+// Default option values of the module's actions.
+const DEFAULTS = {
+  invokeTemplateFunction: {
+    playserver: 'OVERLAY',
+    playchannel: '1',
+    playlayer: '19',
+    webplayout: '19',
+    customFunction: 'myCustomTemplateFunction',
+    params: 'Hello World',
+  },
 };
 
 // Runs a Companion action against the server listening on `port`.
 async function companionAction(port, actionId, options = {}) {
   const build = URLS[actionId];
   if (!build) throw new Error(`Unknown Companion action: ${actionId}`);
-  const res = await fetch(build('127.0.0.1', port, options));
+  const res = await fetch(build('127.0.0.1', port, { ...DEFAULTS[actionId], ...options }));
   const body = await res.text();
   let json = null;
   try {
