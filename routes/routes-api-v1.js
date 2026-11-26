@@ -31,6 +31,7 @@ let ack = 'Sent request to SPX server. Acknowledgement is not to be expected.'
 let ack2 = 'Sent request to SPX Controller. Acknowledgement is not to be expected.'
 const apiHandler = require('../utils/api-handlers.js');
 const autoOut = require('../utils/spx_autoout.js');
+const rundownStore = require('../utils/rundown_store.js');
 
 const notInSolo = {
 	status: 501,
@@ -516,26 +517,22 @@ router.get('/changeItemID', access.requireUiAccess, async (req, res) => {
 		}
 
 		let datafile = rundownFileFromQuery(file);
-		let RundownData = await spx.GetJsonData(datafile);
-
-		// First check for conflicts
-		RundownData.templates.forEach((item, index) => {
-			if (item.itemID === newI) {
+		const saved = await rundownStore.update(datafile, (RundownData) => {
+			// First check for conflicts
+			if (RundownData.templates.some((item) => item.itemID === newI)) {
 				throw 'ID-conflict'
 			}
+			RundownData.templates.forEach((item) => {
+				if (item.itemID === oldI) {
+					item.itemID = newI
+				}
+			});
+			RundownData.updated = new Date().toISOString();
+			spx.appendProjectFile(RundownData, datafile, "from changeItemID");
 		});
-
-		RundownData.templates.forEach((item, index) => {
-			if (item.itemID === oldI) {
-				item.itemID = newI
-			}
-		});
-
-		RundownData.updated = new Date().toISOString();
-
-		RundownData = await spx.appendProjectFile(RundownData, datafile, "from changeItemID");
-		global.rundownData = RundownData;
-		await spx.writeFile(datafile, RundownData);
+		if (!saved) {
+			throw 'Rundown file not found: ' + datafile;
+		}
 		logger.verbose('Changed item ID to ' + newI);
 		return res.status(200).send('ID changed to ' + newI);
 	} catch (error) {
@@ -574,17 +571,18 @@ router.get('/changeItemData', access.requireUiAccess, async (req, res) => {
 			throw 'Invalid key ' + prop;
 		}
 		let datafile = rundownFileFromQuery(file);
-		let RundownData = await spx.GetJsonData(datafile);
-		RundownData.templates.forEach((item, index) => {
-			if (item.itemID === epoc) {
-				item[prop] = valu
-			}
+		const saved = await rundownStore.update(datafile, (RundownData) => {
+			RundownData.templates.forEach((item) => {
+				if (item.itemID === epoc) {
+					item[prop] = valu
+				}
+			});
+			RundownData.updated = new Date().toISOString();
+			spx.appendProjectFile(RundownData, datafile, "from changeItemData");
 		});
-
-		RundownData.updated = new Date().toISOString();
-		RundownData = await spx.appendProjectFile(RundownData, datafile, "from changeItemData");
-		global.rundownData = RundownData; // push to memory also for next take
-		await spx.writeFile(datafile, RundownData);
+		if (!saved) {
+			throw 'Rundown file not found: ' + datafile;
+		}
 		logger.verbose('ChangeItemData: file: [' + file + '], ID: [' + epoc + '], key: [' + prop + '], value: [' + valu + ']')
 		return res.status(200).send(prop + ' changed to ' + valu);
 	} catch (error) {
@@ -958,18 +956,15 @@ async function runDirectPlayout(spec, isAutoOut = false) {
 	};
 
 	let reload = false;
-	let memoryWasEmpty = false;
 	if (link) {
 		const state = rundownState(link.project, link.rundown);
 		if (link.persist) {
-			// The handler saves into the rundown it has in memory, whichever
-			// that is: only use memory when it is this rundown in an open
-			// controller, otherwise make it read the file.
+			// When the rundown is open in a controller, its in-memory copy
+			// is the current state; otherwise re-read the file.
 			playoutBody.updateRundownItem = { persist: true, project: link.project, rundown: link.rundown, itemID: link.itemID };
 			playoutBody.forceFileReadOnce = !state.isOpen;
 			// The handler saves these to the rundown and cleans them up for playout.
 			playoutBody.fields = spec.rawFields;
-			memoryWasEmpty = Object.keys(state.memory).length === 0;
 			if (link.updateUI && isAutoOut) {
 				// Data unchanged: only the item's on-air indicator.
 				playoutBody.updateRundownItem.updateUI = state.isLoaded;
@@ -985,9 +980,6 @@ async function runDirectPlayout(spec, isAutoOut = false) {
 	}
 
 	const result = await runPlayout(playoutBody);
-	if (memoryWasEmpty) {
-		global.rundownData = {};
-	}
 	if (result.status !== 200) {
 		return playoutFailure(result);
 	}
@@ -1133,9 +1125,8 @@ router.get('/controlRundownItemByID', api, async (req, res) => {
 async function runRundownItemCommand({ project, rundown, datafile, itemID, command }) {
 	// If this rundown is open in a controller, its in-memory copy is the
 	// current state: play from it, as a click in that controller would.
-	// Otherwise read the file, and leave the memory as it was.
+	// Otherwise re-read the file.
 	const state = rundownState(project, rundown);
-	const memoryWasEmpty = Object.keys(state.memory).length === 0;
 
 	const result = await runPlayout({
 		datafile: datafile,
@@ -1149,9 +1140,6 @@ async function runRundownItemCommand({ project, rundown, datafile, itemID, comma
 		// a play/stop toggle.
 		updateRundownItem: state.isLoaded && command !== 'next' ? { updateUI: true, itemID: itemID } : undefined,
 	});
-	if (memoryWasEmpty && !state.isOpen) {
-		global.rundownData = {};
-	}
 	if (result.status !== 200) {
 		return playoutFailure(result);
 	}
@@ -1173,17 +1161,17 @@ async function runRundownItemCommand({ project, rundown, datafile, itemID, comma
 }
 
 
-// How a rundown relates to the controller: loaded in memory (the last
-// rundown a controller opened), and open in a connected controller. The
-// memory keeps the rundown after its tab is closed, so "open" also requires
-// a connected controller.
+// How a rundown relates to the controller: loaded (the last rundown a
+// controller opened, see rundownStore.current()), and open in a connected
+// controller. The store keeps the rundown after its tab is closed, so
+// "open" also requires a connected controller.
 function rundownState(project, rundown) {
-	const memory = global.rundownData || {};
+	const current = rundownStore.current() || {};
 	const controllerConnected = [...io.sockets.sockets.values()].some(
 		(s) => String(s.SPXClientName || '').startsWith('SPX_CONTROLLER')
 	);
-	const isLoaded = memory.project === project && memory.rundown === rundown;
-	return { memory: memory, isLoaded: isLoaded, isOpen: controllerConnected && isLoaded };
+	const isLoaded = current.project === project && current.rundown === rundown;
+	return { isLoaded: isLoaded, isOpen: controllerConnected && isLoaded };
 }
 
 
@@ -1191,7 +1179,7 @@ function rundownState(project, rundown) {
 // controller (its state is the current one), otherwise from the file.
 function currentRundownItem(datafile, itemID, fromMemory) {
 	try {
-		const data = fromMemory ? global.rundownData : JSON.parse(fs.readFileSync(datafile, 'utf8'));
+		const data = (fromMemory && rundownStore.get(datafile)) || JSON.parse(fs.readFileSync(datafile, 'utf8'));
 		return (data.templates || []).find((t) => t.itemID == itemID);
 	} catch (error) {
 		logger.warn('Cannot read item [' + itemID + '] of ' + datafile + ': ' + error);
@@ -1237,10 +1225,11 @@ function scheduleAutoOut(out, keys, what, stop) {
 router.get('/rundown/get', api, async (req, res) => {
 	// The rundown currently open in the controller, as kept in memory
 	// (same format as the rundown file).
-	if (!global.rundownData || !global.rundownData.templates) {
+	const current = rundownStore.current();
+	if (!current || !current.templates) {
 		return res.status(404).json({ status: 404, message: 'No rundown is currently open in SPX controller.' });
 	}
-	res.status(200).json(global.rundownData);
+	res.status(200).json(current);
 }); // end get current rundown as JSON
 
 

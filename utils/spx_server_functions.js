@@ -167,23 +167,22 @@ module.exports = {
 
 
   duplicateFile: function (fileRefe, suffix) {
-    try {
-      return new Promise(resolve => {
-        let fldrname = path.dirname(fileRefe);
-        let extename = path.extname(fileRefe);
-        let basename = path.basename(fileRefe, extename);
-        let copyfile =  path.normalize(path.join(fldrname, basename + suffix + extename));
-        fs.copyFile(fileRefe, copyfile, (err) => {
-            if (err) throw err;
-            logger.verbose('Rundown file ' + fileRefe + ' was copied to ' + copyfile + '.');
-            resolve()
-            return true
-          });
-      })
-    } catch (error) {
-      logger.error('spx.duplicateFile - Error while duplicating: ' + fileRefe + ': ' + error);    
-      return false
-    }
+    // Copies <name><ext> to <name><suffix><ext>. Resolves with the copy's
+    // path, rejects on error.
+    return new Promise((resolve, reject) => {
+      let fldrname = path.dirname(fileRefe);
+      let extename = path.extname(fileRefe);
+      let basename = path.basename(fileRefe, extename);
+      let copyfile =  path.normalize(path.join(fldrname, basename + suffix + extename));
+      fs.copyFile(fileRefe, copyfile, (err) => {
+        if (err) {
+          logger.error('spx.duplicateFile - Error while duplicating: ' + fileRefe + ': ' + err);
+          return reject(err);
+        }
+        logger.verbose('Rundown file ' + fileRefe + ' was copied to ' + copyfile + '.');
+        resolve(copyfile)
+      });
+    })
   }, // duplicateFile
  
   fileNameFromPath: function (filepath) {
@@ -331,6 +330,23 @@ module.exports = {
       return (error);
     }
   }, // GetJsonData ended
+
+  readJson: function (fileref) {
+    // File contents as an object; null when the file does not exist.
+    // Throws (with the file name) when it is not valid JSON.
+    let contents;
+    try {
+      contents = fs.readFileSync(fileref, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+    try {
+      return JSON.parse(contents);
+    } catch (error) {
+      throw new Error('Invalid JSON in ' + fileref + ': ' + error.message);
+    }
+  }, // readJson
 
   getJSONFileList: function (FOLDER) {
     try {
@@ -820,8 +836,7 @@ module.exports = {
     // Rename a file:
     // request ..... full original name (c:/temp/volvo.txt), new basename (toyota)
     // returns ..... not much, it just does it
-    try {
-      return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
         let fldrname = path.dirname(orgfile);
         let extename = path.extname(orgfile);
         let newFilePath = path.join(fldrname, newname + extename);
@@ -839,15 +854,14 @@ module.exports = {
         let renafile = path.normalize(newFilePath);
         
         fs.rename(orgfile, renafile, (err) => {
-              if (err) throw err;
+              if (err) {
+                logger.error('spx.renameRundown - Error while renaming: ' + orgfile + ': ' + err);
+                return reject(err);
+              }
               logger.verbose('Rundown file ' + orgfile + ' was renamed to ' + renafile + '.');
-              global.rundownData = {}; // Added in 1.1.2
-              resolve()
+              resolve(renafile)
             });
-      })
-    } catch (error) {
-      logger.error('spx.renameRundown - Error while renaming: ' + orgfile + ': ' + error);    
-    }
+    })
   }, // renameRundown
 
 
@@ -978,34 +992,25 @@ module.exports = {
   }, // versInt
 
   writeFile: function (filepath, data) {
-    try {
-        return new Promise(resolve => {
-          // this.talk('Writing file');
-          // this.playAudio('beep.wav', 'spx.writeFile');
-          data.warning = "Modifications done in the SPX will overwrite this file.";
-          data.copyright = "(c) 2020- SPX Graphics (https://spxgraphics.com)";
-          data.updated = new Date().toISOString();
-          let filedata = JSON.stringify(data, null, 2);
-
-          if (!filepath) {
-            logger.warn('spx.writeFile // No filepath given, not saving anything.');
-            return
-          }
-
-          fs.writeFile(filepath, filedata, 'utf8', function (err) {
-            if (err){
-              console.error('spx.writeFile // Error saving: [' + filepath + ']: ' + err);
-              return 
-            }
-            logger.verbose('spx.writeFile - File written OK: ' + filepath);
-            resolve()
-          });
-          }
-        )
-    } catch (error) {
-      logger.error(error);
-      return 
-    }
+    // Writes data as JSON. Resolves when written, rejects on error.
+    return new Promise((resolve, reject) => {
+      if (!filepath) {
+        logger.warn('spx.writeFile // No filepath given, not saving anything.');
+        return resolve();
+      }
+      data.warning = "Modifications done in the SPX will overwrite this file.";
+      data.copyright = "(c) 2020- SPX Graphics (https://spxgraphics.com)";
+      data.updated = new Date().toISOString();
+      let filedata = JSON.stringify(data, null, 2);
+      fs.writeFile(filepath, filedata, 'utf8', function (err) {
+        if (err){
+          logger.error('spx.writeFile // Error saving: [' + filepath + ']: ' + err);
+          return reject(err)
+        }
+        logger.verbose('spx.writeFile - File written OK: ' + filepath);
+        resolve()
+      });
+    });
   }, // writeFile (.json)
 
   writeTextFile: function (filepath, filedata) {

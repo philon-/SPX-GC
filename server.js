@@ -82,10 +82,7 @@ const vers = process.env.npm_package_version || packageversion || 'X.X.X';
 global.vers = vers;
 global.excel = {'readtime':0, 'filename':'', 'data':''}; // used as Excel cache
 
-// Added in 1.0.15. An memory persistent object to handle -------------
-// rundown state to avoid unnecessary disk I/O and improve performance. 
-global.rundownData = {} 
-// --------------------------------------------------------------------
+// Rundown state in memory: see utils/rundown_store.js
 
 const port = config.general.port || 5656;
 global.CCGSockets = [];

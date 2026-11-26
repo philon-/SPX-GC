@@ -13,6 +13,7 @@ logger.debug('API-route loading...');
 const spx = require('../utils/spx_server_functions.js');
 const xlsx = require('node-xlsx').default;
 const access = require('../utils/spx_access.js');
+const rundownStore = require('../utils/rundown_store.js');
 const { resolveInside, isPlainName, openFolderInOS } = require('../utils/spx_paths.js');
 const ui = access.requireUiAccess; // UI-internal endpoints, see utils/spx_access.js
 
@@ -218,8 +219,14 @@ router.post('/saverundownfile/:projectName/:rundownName', ui, async (req, res) =
       return res.status(403).send('Rundowns can only be saved inside the dataroot folder.');
     }
     logger.debug('Saving rundown file ' + datafile + '...');
-    let data = req.body;
-    await spx.writeFile(datafile,data);
+    // Through the rundown store, so a later play does not write the old
+    // in-memory copy over these changes.
+    await rundownStore.withLock(datafile, async () => {
+      const data = req.body;
+      spx.appendProjectFile(data, datafile);
+      rundownStore.set(datafile, data);
+      await spx.writeFile(datafile, data);
+    });
     io.emit('SPXMessage2Client', {
       spxcmd: "showMessageSlider",
       msg:    "⛔ Rundown data was modified by API. Reload view!",
