@@ -49,9 +49,9 @@ describe('Companion actions using existing endpoints', () => {
   });
 });
 
-// Documents current authentication behaviour. The Companion module cannot
-// send an API key, so it only works when SPX runs without login (the
-// "no login" choice of the first-run auth policy prompt clears username).
+// Authentication as seen by Companion: without the module's API key setting
+// calls are refused when SPX has a key (or a login, which requires a key);
+// with it, they work.
 describe('API authentication as seen by Companion', () => {
   it('rejects API calls when a username is set but no apikey is configured', async () => {
     const spx = await startServer({ general: { username: 'admin', password: 'x' } });
@@ -70,6 +70,20 @@ describe('API authentication as seen by Companion', () => {
     try {
       const res = await companionAction(spx.port, 'play');
       assert.match(res.json?.error || '', /apikey missing/);
+    } finally {
+      await spx.stop();
+    }
+  });
+
+  it('accepts API calls with the module API key setting (login and key configured)', async () => {
+    const spx = await startServer({ general: { username: 'admin', password: 'x', apikey: 'secret' } });
+    try {
+      const msg = spx.listener.next('SPXMessage2Controller', (d) => d.APIcmd === 'ItemPlay');
+      const res = await companionAction(spx.port, 'play', {}, { apikey: 'secret' });
+      assert.equal(res.status, 200);
+      await msg;
+      const denied = await companionAction(spx.port, 'play', {}, { apikey: 'wrong' });
+      assert.equal(denied.status, 401);
     } finally {
       await spx.stop();
     }
