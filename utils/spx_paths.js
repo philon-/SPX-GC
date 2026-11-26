@@ -27,8 +27,8 @@ function isPlainName(name) {
   return s !== '' && s !== '.' && s !== '..' && !/[\\/]/.test(s) && !s.includes('\0');
 }
 
-// Opens a folder in the OS file manager. execFile runs no shell, so the
-// path cannot inject commands.
+// Opens a folder (or URL) with the OS default handler. execFile runs no
+// shell, so the path cannot inject commands; errors are logged.
 function openFolderInOS(folder) {
   const logger = require('./logger.js'); // lazy: needs global config
   const opener = { darwin: 'open', win32: 'explorer', linux: 'xdg-open' }[process.platform];
@@ -38,8 +38,8 @@ function openFolderInOS(folder) {
   }
   execFile(opener, [folder], (err) => {
     // explorer.exe exits with 1 even on success.
-    if (err && process.platform !== 'win32') logger.warn('Could not open folder ' + folder + ': ' + err.message);
+    if (err && process.platform !== 'win32') logger.warn('Could not open ' + folder + ': ' + err.message);
   });
 }
 
-module.exports = { resolveInside, isPlainName, openFolderInOS };
+module.exports = { resolveInside, isPlainName, openFolderInOS, openInOS: openFolderInOS };

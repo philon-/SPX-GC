@@ -904,13 +904,8 @@ var server = app.listen(port, (err) => {
   console.log('');
 
   if ( config.general.launchBrowser || global.generatingDefaultConfig ) {
-    try {
-      (async () => {
-        require("openurl").open(`http://${ipad}:${port}/`)
-      })();
-    } catch (error) {
-      console.warn('Could not open browser.')
-    }
+    // Errors (e.g. no browser on a headless machine) are logged, not thrown.
+    require('./utils/spx_paths.js').openInOS(`http://${ipad}:${port}/`)
   }
 
 });

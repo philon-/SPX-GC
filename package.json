@@ -41,7 +41,6 @@
     "node-wav-player": "^1.0.0",
     "node-xlsx": "^0.24.0",
     "open": "^10.1.0",
-    "openurl": "^1.1.1",
     "osc": "^2.4.5",
     "rotating-file-stream": "^3.2.5",
     "socket.io": "^4.8.0",
