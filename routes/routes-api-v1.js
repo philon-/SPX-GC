@@ -334,7 +334,7 @@ router.get('/version', async (req, res) => {
 router.get('/panic', api, async (req, res) => {
 	io.emit('SPXMessage2Client', { spxcmd: 'clearAllLayers' }); // clear webrenderers
 	io.emit('SPXMessage2Controller', { APIcmd: 'RundownAllStatesToStopped' }); // stop UI and save stopped values to rundown
-	if (spx.CCGServersConfigured) {
+	if (spx.CCGServersConfigured()) {
 		PlayoutCCG.clearChannelsFromGCServer(req.body.server) // server is optional
 	}
 	return res.status(200).json({ status: 200, message: 'OK', info: 'Panic executed. Layers cleared forcefully.' })

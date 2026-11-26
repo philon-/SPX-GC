@@ -10,7 +10,7 @@ module.exports = {
         try {
             io.emit('SPXMessage2Client', {spxcmd: 'clearAllLayers'}); // clear webrenderers
             io.emit('SPXMessage2Controller', {APIcmd:'RundownAllStatesToStopped'}); // stop UI and save stopped values to rundown
-            if (spx.CCGServersConfigured){
+            if (spx.CCGServersConfigured()){
                 PlayoutCCG.clearChannelsFromGCServer() // server is optional, so doing ALL!!!!!
             } 
             console.log('PANIC HANDLER');

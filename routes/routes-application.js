@@ -230,21 +230,11 @@ router.post('/config', spxAuth.CheckLogin, async (req, res) => {
 		}
 	}
 
-	if (ConfigData.casparcg) {
-		// iterate all casparcg servers and remove if missing data
-		let KillItems = []; // a list of items to delete from server array
-		if (ConfigData.casparcg.servers != undefined && ConfigData.casparcg.servers.length != 0) {
-			ConfigData.casparcg.servers.forEach((element, i) => {
-				if (element.name == "" || element.host == "" || element.port == "") {
-					KillItems.push(i);
-				}
-			});
-			KillItems.forEach((item) => {
-				ConfigData.casparcg.servers.splice(item, 1);
-			});
-		}
-	} else {
-		// console.log('Not a single CasparCG server in config.');
+	if (ConfigData.casparcg && Array.isArray(ConfigData.casparcg.servers)) {
+		// remove casparcg servers with missing data
+		ConfigData.casparcg.servers = ConfigData.casparcg.servers.filter(
+			(element) => !(element.name == "" || element.host == "" || element.port == "")
+		);
 	}
 
 	// remove un-necessary temp-fields
@@ -261,19 +251,12 @@ router.post('/config', spxAuth.CheckLogin, async (req, res) => {
 	logger.debug('Saving config file ' + datafile + '...');
 
 	try {
-		async function saveAndReadConfig() {
-			// console.log('*** WRITING ***');
-			await spx.writeFile(datafile, ConfigData);
-			// console.log('*** READING ***');
-			await cfg.readConfig();
-			// console.log('*** RENDERING ***');
-			res.render('view-appconfig', { recents: ConfigData.general.recents, layout: false, config: config, message: 'Changes saved', user: req.session.user });
-		};
-		// -----------------------------------------------------------------------------
-		saveAndReadConfig(); // a nice solution 
+		await spx.writeFile(datafile, ConfigData);
+		await cfg.readConfig();
+		res.render('view-appconfig', { recents: ConfigData.general.recents, layout: false, config: config, message: 'Changes saved', user: req.session.user });
 	} catch (error) {
-		logger.error('router.post/config - Error while saving file: ', error);
-		res.render('view-appconfig', { recents: ConfigData.general.recents, layout: false, config: config, error: 'Error saving config: ' + err, user: req.session.user });
+		logger.error('router.post/config - Error while saving file: ' + error);
+		res.render('view-appconfig', { recents: ConfigData.general.recents, layout: false, config: config, error: 'Error saving config: ' + error, user: req.session.user });
 	}; //file written
 
 
@@ -1394,6 +1377,16 @@ async function playoutLocked(req, RundownFile, usesRundown) {
 
 
 
+		// Commands that load the template need it to exist; checked before
+		// anything is sent. (Stop, continue etc. still work for a template
+		// that was removed while on air.)
+		if (['play', 'preview', 'autoPlayLocal'].includes(playOutCommand) && dataOut.relpath) {
+			let templateAbsPath = path.join(spx.getStartUpFolder(), 'ASSETS', 'templates', dataOut.relpath);
+			if (!fs.existsSync(templateAbsPath)) {
+				throw (playOutCommand + ' warning! Template not found: ' + dataOut.relpath);
+			}
+		}
+
 		switch (playOutCommand) {
 
 			// == PREVIEW ===================================================
@@ -1429,7 +1422,7 @@ async function playoutLocked(req, RundownFile, usesRundown) {
 
 
 				// Send PlayoutCCG.functionCalls() if any ---------------------
-				if (dataOut.playserver && dataOut.playserver != '-' && spx.CCGServersConfigured) { // 1.1.3 added dataOut.playserver
+				if (dataOut.playserver && dataOut.playserver != '-' && spx.CCGServersConfigured()) { // 1.1.3 added dataOut.playserver
 					dataOut.command = "ADD";
 					logger.verbose('CasparCG play: [' + dataOut.relpathCCG + '] ' + dataOut.playserver + '/' + dataOut.playchannel + '-' + dataOut.playlayer);
 					playingSomewhere = true;
@@ -1618,13 +1611,6 @@ async function playoutLocked(req, RundownFile, usesRundown) {
 			}
 		}
 
-		// Check if file exists. Function improved in 1.1.3
-		if (dataOut.relpath) {
-			let templateAbsPath = path.join(spx.getStartUpFolder(), 'ASSETS', 'templates', dataOut.relpath);
-			if (!fs.existsSync(templateAbsPath)) {
-				throw (playOutCommand + ' warning! Template not found: ' + dataOut.relpath);
-			}
-		}
 } // playoutLocked ended
 
 router.post('/gc/playout', spxAuth.CheckLogin, playout);
@@ -1678,12 +1664,12 @@ router.post('/gc/clearPlayouts', spxAuth.CheckLogin, async (req, res) => {
 		}
 
 		// Clear CasparCG -------------------
-		if (!spx.CCGServersConfigured) { return } // exit early, no need to do any CasparCG work
+		if (!spx.CCGServersConfigured()) { return } // exit early, no need to do any CasparCG work
 		PlayoutCCG.clearChannelsFromGCServer(req.body.server) // server is optional
 	}
 	catch (error) {
 		logger.error('Error in gc/clearPlayouts while clearing channels. [' + error + '].');
-		res.status(500).send('SPX error in gc/clearPlayouts [' + error + '].')  // error 500 AJAX RESPONSE
+		if (!res.headersSent) res.status(500).send('SPX error in gc/clearPlayouts [' + error + '].')  // error 500 AJAX RESPONSE
 	};
 
 }); // clearPlayouts ended
@@ -2178,7 +2164,7 @@ async function GetJsonData(fileref) {
 
 
 		logger.error(msg);
-		return (msg);
+		return false; // like a missing file: callers check for a falsy result
 	}
 } // GetJsonData ended
 

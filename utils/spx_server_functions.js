@@ -326,8 +326,10 @@ module.exports = {
       return JSON.parse(contents);
     }
     catch (error) {
-      logger.error('ERROR in spx.GetJsonData() Invalid JSON Data?: ' + error);
-      return (error);
+      // false, like a missing file (callers check for a falsy result). Use
+      // readJson() where the reason matters.
+      logger.error('ERROR in spx.GetJsonData() Invalid JSON in ' + fileref + ': ' + error);
+      return false;
     }
   }, // GetJsonData ended
 
@@ -992,50 +994,50 @@ module.exports = {
   }, // versInt
 
   writeFile: function (filepath, data) {
-    // Writes data as JSON. Resolves when written, rejects on error.
-    return new Promise((resolve, reject) => {
-      if (!filepath) {
-        logger.warn('spx.writeFile // No filepath given, not saving anything.');
-        return resolve();
-      }
-      data.warning = "Modifications done in the SPX will overwrite this file.";
-      data.copyright = "(c) 2020- SPX Graphics (https://spxgraphics.com)";
-      data.updated = new Date().toISOString();
-      let filedata = JSON.stringify(data, null, 2);
-      fs.writeFile(filepath, filedata, 'utf8', function (err) {
-        if (err){
-          logger.error('spx.writeFile // Error saving: [' + filepath + ']: ' + err);
-          return reject(err)
-        }
-        logger.verbose('spx.writeFile - File written OK: ' + filepath);
-        resolve()
-      });
-    });
+    // Writes data as JSON (atomically, see writeAtomic). Resolves when
+    // written, rejects on error.
+    if (!filepath) {
+      logger.warn('spx.writeFile // No filepath given, not saving anything.');
+      return Promise.resolve();
+    }
+    data.warning = "Modifications done in the SPX will overwrite this file.";
+    data.copyright = "(c) 2020- SPX Graphics (https://spxgraphics.com)";
+    data.updated = new Date().toISOString();
+    return writeAtomic(filepath, JSON.stringify(data, null, 2));
   }, // writeFile (.json)
 
   writeTextFile: function (filepath, filedata) {
-    // console.log('writing text file ' + filepath);
-    try {
-        return new Promise(resolve => {
-          filedata.updated = new Date().toISOString();
-          fs.writeFile(filepath, filedata, 'utf8', function (err) { 
-            if (err) {
-              logger.error('spx.writeFile - Error while saving: ' + filepath + ': ' + err);
-              return;
-              // throw err;
-            }
-            logger.verbose('spx.writeFile - File written OK: ' + filepath);
-            resolve()
-            });
-          }
-        )
-    } catch (error) {
-      logger.error('spx.writeFile - Error while saving: ' + filepath + ': ' + error);    
-    }
+    // Writes a text file (atomically). Resolves when written, rejects on error.
+    return writeAtomic(filepath, String(filedata));
   }, // writeTextFile (other)
 
 
 } // end of exports (spx.)
+
+// Writes `text` to a temporary file next to `filepath` and renames it over
+// `filepath`, so a crash or full disk never leaves a half-written file.
+// Windows can briefly lock the target (antivirus, Explorer): the rename is
+// retried a few times.
+async function writeAtomic(filepath, text) {
+  const tmp = filepath + '.' + process.pid + '-' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  try {
+    await fs.promises.writeFile(tmp, text, 'utf8');
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fs.promises.rename(tmp, filepath);
+        break;
+      } catch (error) {
+        if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error;
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+      }
+    }
+    logger.verbose('spx.writeFile - File written OK: ' + filepath);
+  } catch (error) {
+    logger.error('spx.writeFile - Error while saving ' + filepath + ': ' + error);
+    fs.promises.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
 
 function lPad(nro,len,char){
   // leftpad string beginning with char's 

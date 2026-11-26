@@ -15,6 +15,7 @@ const ipad = ip.address(); // my ip address
 const port = config.general.port || 5656;
 
 const PlayoutCCG = require('../utils/playout_casparCG.js');
+const net = require('net');
 const { openFolderInOS } = require('../utils/spx_paths.js');
 
 
@@ -27,27 +28,31 @@ router.get('/system', function (req, res) {
   res.send('Nothing here. Get lost.');
 });
 
-router.get('/requestInfo', async (req, res) => {
-  var SERVER  = req.query.server;   // ?server=OVERLAY
-  var COMMAND = req.query.command;  // &command=INFO
-  // console.log('requestInfo from ' + SERVER + ', cmd: ' + COMMAND);
-  const CCGHost = global.CCGSockets[PlayoutCCG.getSockIndex(SERVER)].spxhost;
-  const CCGPort = global.CCGSockets[PlayoutCCG.getSockIndex(SERVER)].spxport;
-  const net = require('net')
-  CasparRequest = new net.Socket();
-  CasparRequest.connect(CCGPort, CCGHost, function () {
-    CasparRequest.write(COMMAND + '\r\n');
-    CasparRequest.on('data', function (data) {
-      res.set('Content-Type', 'text/plain'); // format
-      res.status(200).send(data);
-      CasparRequest.destroy();
-    });
+router.get('/requestInfo', (req, res) => {
+  // Sends one AMCP command (?server=OVERLAY&command=INFO) on a separate
+  // connection and answers with CasparCG's reply as text.
+  const server = global.CCGSockets.find((s) => String(s.spxname).toLowerCase() === String(req.query.server || '').toLowerCase());
+  if (!server) {
+    return res.status(404).send('CasparCG server [' + req.query.server + '] is not configured.');
+  }
+  // One command per request: no line breaks.
+  const command = String(req.query.command || '').replace(/[\r\n]/g, ' ').trim();
+  if (!command) {
+    return res.status(400).send('command is required.');
+  }
 
-    CasparRequest.on('error', function (error) {
-      return res.status(500).send(error);
-      CasparRequest.destroy();
-    });
-  });
+  const request = new net.Socket();
+  let answered = false;
+  const answer = (status, body) => {
+    if (answered) return;
+    answered = true;
+    request.destroy();
+    res.status(status).type('text/plain').send(body);
+  };
+  request.setTimeout(5000, () => answer(504, 'No reply from CasparCG [' + server.spxname + '].'));
+  request.on('error', (error) => answer(502, 'CasparCG [' + server.spxname + '] error: ' + error.message));
+  request.on('data', (data) => answer(200, data));
+  request.connect(server.spxport, server.spxhost, () => request.write(command + '\r\n'));
 });
 
 router.get('/system/:data', (req, res) => {
@@ -104,7 +109,7 @@ router.get('/control/:data', (req, res) => {
   logger.info('CCG/Control/ ' + JSON.stringify(data));
   res.sendStatus(200);
 
-  if (!spx.CCGServersConfigured){   return  } // exit early, no need to do any CasparCG work
+  if (!spx.CCGServersConfigured()){   return  } // exit early, no need to do any CasparCG work
 
   var DataStr = "";
   const directoryPath = path.normalize(config.general.dataroot);
@@ -173,7 +178,7 @@ router.get('/controljson/:data', (req, res) => {
   const data = JSON.parse(req.params.data);
   logger.info('CCG/controljson ' + JSON.stringify(data));
   res.sendStatus(200);
-  if (!spx.CCGServersConfigured){   return  } // exit early, no need to do any CasparCG work
+  if (!spx.CCGServersConfigured()){   return  } // exit early, no need to do any CasparCG work
   const directoryPath = path.normalize(config.general.dataroot);
   let profilefile = path.join(directoryPath, 'config', 'profiles.json');
   const profileDataAsJSON = spx.GetJsonData(profilefile);
@@ -249,8 +254,17 @@ router.post('/disable', async (req, res) => {
 
 
 // Create all required Socket Connections for CasparCG servers specified in config.json
-const net = require('net')
+// Each connection reconnects by itself (with backoff) when it is closed, so a
+// CasparCG restart mid-show does not need an SPX restart.
 let ServerDataForLogger = [];
+const RECONNECT_MIN_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+
+// "202 PLAY OK" -> { code: '202', text: '202 PLAY OK' }; data lines -> null
+function parseAmcpLine(line) {
+  const match = /^(\d{3})\b/.exec(line);
+  return match ? { code: match[1], text: line } : null;
+}
 
 if (config.casparcg) {
   config.casparcg.servers.forEach((element,index) => {
@@ -260,89 +274,79 @@ if (config.casparcg) {
 
     ServerDataForLogger.push({ name: CurName, host: CurHost, port: CurPort });
 
-    // next two lines creates a dynamic variable for this loop iteration
-    // Changed in 1.3.0, from:
-    // var CurCCG = CurName + "= undefined";
-    // eval(CurCCG);
-
-    // ..to:
     var CurCCG = new net.Socket();
-    // end of change
-
     global.CCGSockets.push(CurCCG); // --> PUSH Socket object to a global array for later use
     CurCCG.spxname = CurName; // save each entry a name for later searching!
     CurCCG.spxhost = CurHost; // save each entry a host for later searching! (v.1.0.14)
     CurCCG.spxport = CurPort; // save each entry a port for later searching! (v.1.0.14)
 
-    CurCCG.connect(CurPort, CurHost, function () {
-      ServerDataForLogger.push({ name: CurName, host: CurHost, port: CurPort });
-      data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + index, color: '#00CC00' };
-      io.emit('SPXMessage2Client', data);
-      data = { spxcmd: 'updateStatusText', status: 'Communication established with ' + CurName + '.' };
-      io.emit('SPXMessage2Client', data);
+    let reconnectDelay = RECONNECT_MIN_MS;
+    let reconnectTimer = null;
+    let lineBuffer = '';
+    const indicator = (color) => io.emit('SPXMessage2Client', { spxcmd: 'updateServerIndicator', indicator: 'indicator' + index, color: color });
+    const status = (text) => io.emit('SPXMessage2Client', { spxcmd: 'updateStatusText', status: text });
+
+    const connect = () => {
+      reconnectTimer = null;
+      lineBuffer = '';
+      CurCCG.connect(CurPort, CurHost);
+    };
+
+    CurCCG.on('connect', function () {
+      reconnectDelay = RECONNECT_MIN_MS;
+      indicator('#00CC00');
+      status('Communication established with ' + CurName + '.');
       logger.verbose('SPX connected to CasparCG as \'' + CurName + '\' at ' + CurHost + ":" + CurPort + '.');
     });
 
-    CurCCG.on('data', function (data) {
-      logger.verbose('SPX received data from CasparCG ' + CurName + ': ' + data);
-
-      // we must parse the data so we can evaluate it...
-      let CCG_RETURN_TEXT = String(data).replace('\r','').replace('\n',''); // convert return object to string, strip \r\n
-      let CCG_RETURN_CODE = CCG_RETURN_TEXT.substring(0, 2); // first two chars
-      switch (CCG_RETURN_CODE) {
-        case "20":
-          logger.verbose('Comms good with ' + CurName + ": " + CCG_RETURN_TEXT);
-          break;
-
-        case "40":
-          logger.error(CurName + ' CasparCG response: ' + CCG_RETURN_TEXT );
-          logger.debug('Verify CasparCG\'s (' + CurName + ') access to templates on SPX server at ' + spx.getTemplateSourcePath());
-          data = { spxcmd: 'updateStatusText', status: 'Error in comms with ' + CurName + '.' };
-          io.emit('SPXMessage2Client', data);
-          break;
-
-        case "50":
-          logger.error('Failed ' + CurName + ": " + CCG_RETURN_TEXT);
-          data = { spxcmd: 'updateStatusText', status: CurName + ' failed.' };
-          io.emit('SPXMessage2Client', data);
-          break;
-
-        default:
-          logger.error('Unknown status value ' + CurName + ' - ' + CCG_RETURN_CODE + ' - ' + CCG_RETURN_TEXT);
-          break;
+    CurCCG.on('data', function (chunk) {
+      logger.verbose('SPX received data from CasparCG ' + CurName + ': ' + chunk);
+      // AMCP replies are lines; a chunk can hold several replies or part of one.
+      lineBuffer += String(chunk);
+      const lines = lineBuffer.split(/\r?\n/);
+      lineBuffer = lines.pop();
+      for (const line of lines) {
+        const reply = parseAmcpLine(line.trim());
+        if (!reply) continue; // data line of a multi-line reply
+        switch (reply.code.charAt(0)) {
+          case '1':
+          case '2':
+            logger.verbose('Comms good with ' + CurName + ": " + reply.text);
+            break;
+          case '4':
+            logger.error(CurName + ' CasparCG response: ' + reply.text );
+            logger.debug('Verify CasparCG\'s (' + CurName + ') access to templates on SPX server at ' + spx.getTemplateSourcePath());
+            status('Error in comms with ' + CurName + '.');
+            break;
+          case '5':
+            logger.error('Failed ' + CurName + ": " + reply.text);
+            status(CurName + ' failed.');
+            break;
+          default:
+            logger.error('Unknown status value ' + CurName + ' - ' + reply.text);
+        }
       }
-
-
-      // SocketIO call to client
-      data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + index, color: '#00CC00' };
-      io.emit('SPXMessage2Client', data);
-      if (data.toString().endsWith('exit')) {
-        CCGclient.destroy();
-      }
+      indicator('#00CC00');
     });
 
     CurCCG.on('close', function () {
-      // SocketIO call to client
-      data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + index, color: '#CC0000' };
-      io.emit('SPXMessage2Client', data);
-      data = { spxcmd: 'updateStatusText', status: 'Connection to ' + CurName + ' was closed.' };
-      io.emit('SPXMessage2Client', data);
-      logger.verbose('SPX connection to CasparCG "' + CurName + '" closed (' + CurHost + ':' + CurPort + ').');
+      indicator('#CC0000');
+      status('Connection to ' + CurName + ' was closed.');
+      if (reconnectTimer) return;
+      logger.verbose('SPX connection to CasparCG "' + CurName + '" closed (' + CurHost + ':' + CurPort + '). Reconnecting in ' + reconnectDelay + ' ms.');
+      reconnectTimer = setTimeout(connect, reconnectDelay);
+      reconnectTimer.unref();
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     });
 
     CurCCG.on('error', function (err) {
-      // console.log('Still 4?', CurCCG.connecting)
-      data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + index, color: '#CC0000' };
-      io.emit('SPXMessage2Client', data);
-
-      data = { spxcmd: 'updateStatusText', status: 'Communication error with ' + CurName + '.' };
-      io.emit('SPXMessage2Client', data);
-
-      logger.warn('Unable to connect CasparCG "' + CurName + '" (' + CurCCG.spxhost + ':'  + CurCCG.spxport + '). Is it running?');
-      // console.log('Sockets: ', global.CCGSockets);
+      // 'close' follows and schedules the reconnect.
+      indicator('#CC0000');
+      status('Communication error with ' + CurName + '.');
+      logger.warn('Unable to connect CasparCG "' + CurName + '" (' + CurCCG.spxhost + ':'  + CurCCG.spxport + '). Is it running? ' + err.message);
     });
 
-    // console.log('Still 3?', CurCCG.connecting)
+    connect();
   });
 }; // end if 
 

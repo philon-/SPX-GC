@@ -107,7 +107,7 @@ module.exports = {
 
                 // folderchecks (improved in 1.0.15)
                 let CurrentLogFolder = global.config.general.logfolder || CURRENT_FOLDER + '/LOG'
-                let CurrentDataRootF = global.config.general.logfolder || CURRENT_FOLDER + '/DATAROOT'
+                let CurrentDataRootF = global.config.general.dataroot || CURRENT_FOLDER + '/DATAROOT'
                 this.makeFolderIfNotExist(CurrentLogFolder);
                 this.makeFolderIfNotExist(CurrentDataRootF);
                 global.configfileref =  CONFIG_FILE;

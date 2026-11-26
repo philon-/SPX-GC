@@ -135,6 +135,12 @@ class FakeCasparCG {
     });
   }
 
+  // Drops SPX's connections but keeps listening (like a CasparCG restart).
+  async dropConnections() {
+    for (const s of this.sockets) s.destroy();
+    while (this.sockets.size > 0) await new Promise((r) => setTimeout(r, 20));
+  }
+
   close() {
     for (const s of this.sockets) s.destroy();
     return new Promise((r) => this.server.close(() => r()));

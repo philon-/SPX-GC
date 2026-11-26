@@ -371,7 +371,8 @@ router.post('/exportCSVfile', ui, async (req, res) => {
     logger.verbose('Created ' + CSVfileRef + ' from itemID ' + req.body.itemID + ' on ' + dataJSONfile + '. ');
     res.status(200).send('Generated file ' + CSVfileRef);
   } catch (error) {
-    logger.error('API error in exportCSVfile(): ', error);
+    logger.error('API error in exportCSVfile(): ' + error);
+    res.status(500).send('CSV export failed: ' + error);
   }; //file written
 }); // POST exportCSVfile end
 
@@ -405,8 +406,8 @@ async function GetDataFiles() {
     return jsonData;
   }
   catch (error) {
-    logger.error('Error while reading files from ' + directoryPath + ': ' + err);
-    return (error);
+    logger.error('Error while reading files from ' + directoryPath + ': ' + error);
+    return { folder: directoryPath, files: [], error: String(error) };
   }
 } // GetDataFiles ended
 
