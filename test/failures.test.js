@@ -22,23 +22,31 @@ describe('Failed rundown writes', () => {
     spx = await startServer();
     dataDir = path.join(spx.dir, 'DATAROOT', PROJECT, 'data');
     file = path.join(dataDir, RUNDOWN + '.json');
+    // Opened in the controller, so the save works on the in-memory copy and
+    // only the write to disk fails.
+    assert.equal((await fetch(`${spx.baseUrl}/gc/${PROJECT}/${RUNDOWN}`)).status, 200);
   });
   after(async () => {
-    fs.chmodSync(dataDir, 0o755);
     await spx?.stop();
   });
 
   const save = (value) =>
     post(`${spx.baseUrl}/gc/saveItemChanges`, { rundownfile: file, epoch: ITEM, DataFields: [{ field: 'f0', value }] });
 
-  it('answer 500 instead of hanging, and leave the file intact', async () => {
-    const before = fs.readFileSync(file, 'utf8');
-    fs.chmodSync(dataDir, 0o555); // writes into the folder fail
-    const res = await save('not saved');
-    assert.equal(res.status, 500);
-    fs.chmodSync(dataDir, 0o755);
-    assert.equal(fs.readFileSync(file, 'utf8'), before);
-    assert.deepEqual(fs.readdirSync(dataDir).filter((f) => f.endsWith('.tmp')), [], 'no temp files left');
+  it('answer 500 instead of hanging, and leave no temp files', async () => {
+    // A folder where the rundown file should be: writing it fails on every
+    // OS (folder permissions do not work for this on Windows).
+    const moved = file + '.moved';
+    fs.renameSync(file, moved);
+    fs.mkdirSync(file);
+    try {
+      const res = await save('not saved');
+      assert.equal(res.status, 500);
+      assert.deepEqual(fs.readdirSync(dataDir).filter((f) => f.endsWith('.tmp')), [], 'no temp files left');
+    } finally {
+      fs.rmdirSync(file);
+      fs.renameSync(moved, file);
+    }
   });
 
   it('do not block later writes to the same rundown', async () => {
