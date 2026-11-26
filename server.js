@@ -27,7 +27,6 @@
 const express = require('express')
 const session = require('express-session')
 const bodyParser = require('body-parser')
-const cors = require('cors')
 const exphbs = require('express-handlebars')
 const app = express()
 const ip = require('./utils/spx_ip.js')
@@ -71,6 +70,7 @@ if (!configfileref) {
 
 const spx = require('./utils/spx_server_functions.js');
 const logger = require('./utils/logger.js');
+const access = require('./utils/spx_access.js');
 
 // STATICS
 app.use(express.static(path.join(__dirname,('static'))))
@@ -107,6 +107,8 @@ var accessLogStream = rfs.createStream('access.log', {
   interval: '1d', // rotate daily
   path: logDirectory
 })
+// API keys sent as ?apikey= must not end up in the access log.
+morgan.token('url', (req) => access.redactApiKey(req.originalUrl || req.url))
 app.use(morgan('combined', { stream: accessLogStream }))
 
 
@@ -806,12 +808,15 @@ app.set('views', path.join(__dirname, 'views'));
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(cors());
-app.use(session({
-  secret: 'salainenSalaisuus#007',
+app.use(access.corsPolicy);       // see utils/spx_access.js
+app.use(access.refuseCrossSite);
+const sessionMiddleware = session({
+  secret: access.loadSessionSecret(spx.getStartUpFolder()),
   resave: false,
-  saveUninitialized: false
-}));
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: 'lax' }
+});
+app.use(sessionMiddleware);
 
 global.user = "";
 
@@ -826,7 +831,7 @@ const ROUTEapp = require('./routes/routes-application.js');
 app.use('/', ROUTEapp);
 
 const ROUTEccg = require('./routes/routes-casparcg.js');
-app.use('/CCG', ROUTEccg);
+app.use('/CCG', access.requireUiAccess, ROUTEccg);
 
 process.on('uncaughtException', function(err) {
   logger.error('Uncaught Exception: ' + err);
@@ -912,6 +917,7 @@ var server = app.listen(port, (err) => {
 });
 
 global.io = require('socket.io')(server);
+io.engine.use(sessionMiddleware); // socket.request.session, see access.mayRelayFromSocket
 var clients = {}
 
 io.sockets.on('connection', function (socket) {
@@ -934,6 +940,11 @@ io.sockets.on('connection', function (socket) {
   }); // end disconnect
 
   socket.on('SPXWebRendererMessage', function (data) {
+    // Relayed to every renderer, which act on (and eval) these commands.
+    if (!access.mayRelayFromSocket(socket)) {
+      logger.warn('Refused SPXWebRendererMessage from socket ' + socket.id + ' (not logged in, or opened by another site).');
+      return;
+    }
     io.emit('SPXMessage2Client', data);
   });
 
@@ -947,7 +958,8 @@ io.sockets.on('connection', function (socket) {
         break;
 
       case 'saveToLog': // Added in 1.3.0
-        let level = data.level || 'info';
+        let level = String(data.level || 'info').toLowerCase();
+        if (!access.isLogLevel(level)) { level = 'info'; }
         let ref   = data.fileref || 'unknown';
         logger[level]('TemplateLog [' + ref + '] --> ' + data.message);
         break;

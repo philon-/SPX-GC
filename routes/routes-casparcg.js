@@ -15,6 +15,7 @@ const ipad = ip.address(); // my ip address
 const port = config.general.port || 5656;
 
 const PlayoutCCG = require('../utils/playout_casparCG.js');
+const { openFolderInOS } = require('../utils/spx_paths.js');
 
 
 // ROUTES CCG -----------------------------------------------------------------------------------
@@ -50,37 +51,34 @@ router.get('/requestInfo', async (req, res) => {
 });
 
 router.get('/system/:data', (req, res) => {
-  // same principle as with /control/:data
-  // do OpSys level stuff, open folders etc..
-  //
-  // NOTE: This endpoint is in the WRONG PLACE
-  //       it should be moved to a more generic place
-  //
-  // console.log('System utilities / ' + req.params.data);
-  data = JSON.parse(req.params.data);
-  let directoryPath = "";
+  // OS level utilities requested by the controller UI (open folders,
+  // connection check, restart).
+  let data;
+  try {
+    data = JSON.parse(req.params.data);
+  } catch (error) {
+    return res.status(400).send('Invalid JSON in /CCG/system request.');
+  }
   logger.verbose('System utilities / ' + JSON.stringify(data));
   res.sendStatus(200);
   switch (data.command) {
 
     case 'DATAFOLDER':
-      directoryPath = path.normalize(config.general.dataroot);
-      require('child_process').exec('start "" ' + directoryPath);
-      break;
-
     case 'TEMPLATEFOLDER':
-      // directoryPath = path.normalize(config.general.templatefolder);
-      directoryPath = path.join(spx.getStartUpFolder(), 'ASSETS', 'templates');
-      require('child_process').exec('start "" ' + directoryPath);
+      if (config.general.disableOpenFolderCommand == true) {
+        logger.warn('Open folder commands are disabled in config.');
+        break;
+      }
+      openFolderInOS(data.command == 'DATAFOLDER'
+        ? path.normalize(config.general.dataroot)
+        : path.join(spx.getStartUpFolder(), 'ASSETS', 'templates'));
       break;
 
     case 'CHECKCONNECTIONS':
-      // console.log('CCG: Checking server connections...');
       spx.checkServerConnections();
       break;
 
     case 'RESTARTSERVER':
-      // 
       logger.error('RESTART SERVER REQUEST RECEIVED. Will try to kill and restart using process manager.');
       process.exit(2);
       break;
@@ -102,7 +100,7 @@ router.get('/control/:data', (req, res) => {
   // - server
   // - channel
   // - layer
-  data = JSON.parse(req.params.data);
+  const data = JSON.parse(req.params.data);
   logger.info('CCG/Control/ ' + JSON.stringify(data));
   res.sendStatus(200);
 
@@ -120,10 +118,11 @@ router.get('/control/:data', (req, res) => {
   for (var i = 0; i < arr.length; i++) {
     var obj = arr[i];
     if (obj.name == data.profile) {
-      GFX_Teml = eval("obj.templates." + data.element + ".templatefile");
-      GFX_Serv = eval("obj.templates." + data.element + ".server");
-      GFX_Chan = eval("obj.templates." + data.element + ".channel");
-      GFX_Laye = eval("obj.templates." + data.element + ".layer");
+      const element = obj.templates?.[data.element];
+      GFX_Teml = element?.templatefile;
+      GFX_Serv = element?.server;
+      GFX_Chan = element?.channel;
+      GFX_Laye = element?.layer;
     }
   }
 
@@ -137,9 +136,7 @@ router.get('/control/:data', (req, res) => {
         TEMPLATEDATA += spx.CGComponentFactory(item.id, item.value)
       });
     }
-    DataSta = "<templateData>";
-    DataEnd = "</templateData>";
-    DataStr = DataSta + TEMPLATEDATA + DataEnd;
+    DataStr = "<templateData>" + TEMPLATEDATA + "</templateData>";
   }
 
   try {
@@ -173,7 +170,7 @@ router.get('/control/:data', (req, res) => {
 
 router.get('/controljson/:data', (req, res) => {
 
-  data = JSON.parse(req.params.data);
+  const data = JSON.parse(req.params.data);
   logger.info('CCG/controljson ' + JSON.stringify(data));
   res.sendStatus(200);
   if (!spx.CCGServersConfigured){   return  } // exit early, no need to do any CasparCG work
@@ -191,10 +188,11 @@ router.get('/controljson/:data', (req, res) => {
   for (var i = 0; i < arr.length; i++) {
     var obj = arr[i];
     if (obj.name == data.profile) {
-      GFX_Teml = eval("obj.templates." + data.element + ".templatefile");
-      GFX_Serv = eval("obj.templates." + data.element + ".server");
-      GFX_Chan = eval("obj.templates." + data.element + ".channel");
-      GFX_Laye = eval("obj.templates." + data.element + ".layer");
+      const element = obj.templates?.[data.element];
+      GFX_Teml = element?.templatefile;
+      GFX_Serv = element?.server;
+      GFX_Chan = element?.channel;
+      GFX_Laye = element?.layer;
       GFX_JSON = JSON.stringify(data.jsonData);
     }
   }

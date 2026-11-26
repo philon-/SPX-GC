@@ -388,26 +388,39 @@ module.exports = {
   }, // getTemplateSourcePath
 
   hash: function (textToHash){
-    // generate a hashed string using CRYPTO
-    const algorithm = 'aes-192-cbc';
-    const password = 'Password used to generate key';
-    const key = crypto.scryptSync(password, 'salt', 24);
-    const iv = Buffer.alloc(16, 0); // Initialization vector.
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-    let encrypted = cipher.update(textToHash, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return encrypted
+    // Password hash for config.json: "scrypt$<salt hex>$<key hex>".
+    const salt = crypto.randomBytes(16);
+    const key = crypto.scryptSync(String(textToHash), salt, 32);
+    return 'scrypt$' + salt.toString('hex') + '$' + key.toString('hex');
   }, // hash
 
-  hashcompare: function (password, hash){
-    // use bcrypt to compare given password to a hashed one
-    // let value = bcrypt.compareSync(password, hash); // true or false
-    // console.log('PASS ....... ' + this.hash(password));
-    // console.log('HASH ....... ' + hash);
-    // console.log('Compare .... ' + value);
+  legacyHash: function (textToHash){
+    // Format of older versions: AES with a fixed key, so it is reversible.
+    // Only used to verify (and then upgrade) passwords in old configs.
+    const key = crypto.scryptSync('Password used to generate key', 'salt', 24);
+    const cipher = crypto.createCipheriv('aes-192-cbc', key, Buffer.alloc(16, 0));
+    return cipher.update(String(textToHash), 'utf8', 'hex') + cipher.final('hex');
+  }, // legacyHash
 
-    if (this.hash(password) == hash) { return true }
-    return false;
+  isLegacyHash: function (hash){
+    return !!hash && !String(hash).startsWith('scrypt$');
+  }, // isLegacyHash
+
+  hashcompare: function (password, hash){
+    // True when `password` matches the stored `hash` (current or legacy format).
+    if (!hash) { return false }
+    const stored = String(hash);
+    let expected, actual;
+    if (stored.startsWith('scrypt$')) {
+      const [, saltHex, keyHex] = stored.split('$');
+      if (!saltHex || !keyHex) { return false }
+      expected = Buffer.from(keyHex, 'hex');
+      actual = crypto.scryptSync(String(password), Buffer.from(saltHex, 'hex'), expected.length);
+    } else {
+      expected = Buffer.from(stored);
+      actual = Buffer.from(this.legacyHash(password));
+    }
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
   }, // hashcompare
 
 

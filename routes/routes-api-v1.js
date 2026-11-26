@@ -23,7 +23,9 @@ const xlsx = require('node-xlsx').default;
 const axios = require('axios')
 const PlayoutCCG = require('../utils/playout_casparCG.js');
 const { query } = require("../utils/logger");
-const spxAuth = require('../utils/spx_auth.js');
+const access = require('../utils/spx_access.js');
+const { resolveInside } = require('../utils/spx_paths.js');
+const api = access.requireApiAccess; // public API access, see utils/spx_access.js
 let apiCache = [] // used to cache [undocumented] API calls
 let ack = 'Sent request to SPX server. Acknowledgement is not to be expected.'
 let ack2 = 'Sent request to SPX Controller. Acknowledgement is not to be expected.'
@@ -328,7 +330,7 @@ router.get('/version', async (req, res) => {
 }); // end version
 
 
-router.get('/panic', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/panic', api, async (req, res) => {
 	io.emit('SPXMessage2Client', { spxcmd: 'clearAllLayers' }); // clear webrenderers
 	io.emit('SPXMessage2Controller', { APIcmd: 'RundownAllStatesToStopped' }); // stop UI and save stopped values to rundown
 	if (spx.CCGServersConfigured) {
@@ -338,7 +340,7 @@ router.get('/panic', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end panic
 
 
-router.get('/feedproxy', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/feedproxy', api, async (req, res) => {
 	if (!req.query.url) {
 		logger.error('URL missing from feedproxy parameters');
 		return res.status(500).json({ type: 'error', message: 'URL missing from parameters' })
@@ -368,7 +370,7 @@ router.get('/feedproxy', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end feedproxy
 
 
-router.post('/feedproxy', spxAuth.CheckAPIKey, async (req, res) => {
+router.post('/feedproxy', api, async (req, res) => {
 	try {
 		if (!req.body.url) {
 			let errMsg = "url missing from feedproxy request. Make sure to have the correct JSON in your request.";
@@ -456,7 +458,7 @@ function executeGETRequest(req, res) {
 } // end executeGETRequest
 
 
-router.get('/rundown/load/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/load/', api, async (req, res) => {
 
 	// Improved in 1.3.1 to sanitize input
 	let file = await spx.strip(req.query.file);
@@ -476,23 +478,31 @@ router.get('/rundown/load/', spxAuth.CheckAPIKey, async (req, res) => {
 	dataOut.info = ack2
 	dataOut.APIcmd = 'RundownLoad';
 	dataOut.file = file;
-	dataOut.apikey = req.query.apikey || '';
 	io.emit('SPXMessage2Controller', dataOut);
 	res.status(200).json(dataOut);
 }); // end load
 
 
-router.get('/rundown/stopAllLayers', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/stopAllLayers', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.info = ack2
 	dataOut.APIcmd = 'RundownStopAll';
-	dataOut.apikey = req.query.apikey || '';
 	io.emit('SPXMessage2Controller', dataOut);
 	res.status(200).json(dataOut);
 }); // end stopAllLayers
 
+// Rundown file given by the controller UI as a full path: must be a .json
+// file inside the dataroot. Throws otherwise.
+function rundownFileFromQuery(file) {
+	const datafile = resolveInside(spx.getDatarootFolder(), path.resolve(String(file)));
+	if (!datafile || path.extname(datafile).toLowerCase() !== '.json') {
+		throw 'Rundown file must be a .json file inside the dataroot folder: ' + file;
+	}
+	return datafile;
+}
 
-router.get('/changeItemID', async (req, res) => {
+
+router.get('/changeItemID', access.requireUiAccess, async (req, res) => {
 	// Added in 1.0.15 - undocumented intentionally
 	// ID button in SPX controller uses this API endpoint:
 	// /api/v1/changeItemID?rundownfile=C:/SPX/DATAROOT/PROJECT/data/list.json&ID=0000001&newID=0000002
@@ -505,7 +515,7 @@ router.get('/changeItemID', async (req, res) => {
 			throw 'Missing data: file [' + file + '], old [' + oldI + '], new [' + newI + ']';
 		}
 
-		let datafile = path.normalize(file);
+		let datafile = rundownFileFromQuery(file);
 		let RundownData = await spx.GetJsonData(datafile);
 
 		// First check for conflicts
@@ -529,6 +539,7 @@ router.get('/changeItemID', async (req, res) => {
 		logger.verbose('Changed item ID to ' + newI);
 		return res.status(200).send('ID changed to ' + newI);
 	} catch (error) {
+		let msg, lvl;
 		switch (error) {
 			case 'ID-conflict':
 				msg = 'ID conflict, ID was not changed.'
@@ -545,21 +556,24 @@ router.get('/changeItemID', async (req, res) => {
 });
 
 
-router.get('/changeItemData', async (req, res) => {
+router.get('/changeItemData', access.requireUiAccess, async (req, res) => {
 	// Added in 1.1.1
 	// ID button in SPX controller uses this API endpoint:
 	// /api/v1/changeItemData?rundownfile=C:/SPX/DATAROOT/PROJECT/data/list.json & ID=1234567890 & key=out & newValue=manual
 
+	let file = String(req.query.rundownfile || '');
+	let epoc = String(req.query.ID || '');
+	let prop = String(req.query.key || '');
+	let valu = String(req.query.newValue || '');
 	try {
-		let file = req.query.rundownfile || '';
-		let epoc = req.query.ID || '';
-		let prop = req.query.key || '';
-		let valu = req.query.newValue || '';
 		if (!file || !epoc || !prop || !valu) {
 			logger.warn('Missing data from changeItemData: file: [' + file + '], ID: [' + epoc + '], key: [' + prop + '], value: [' + valu + ']')
 			throw 'Missing data, see log.';
 		}
-		let datafile = path.normalize(file);
+		if (['__proto__', 'constructor', 'prototype'].includes(prop)) {
+			throw 'Invalid key ' + prop;
+		}
+		let datafile = rundownFileFromQuery(file);
 		let RundownData = await spx.GetJsonData(datafile);
 		RundownData.templates.forEach((item, index) => {
 			if (item.itemID === epoc) {
@@ -574,8 +588,7 @@ router.get('/changeItemData', async (req, res) => {
 		logger.verbose('ChangeItemData: file: [' + file + '], ID: [' + epoc + '], key: [' + prop + '], value: [' + valu + ']')
 		return res.status(200).send(prop + ' changed to ' + valu);
 	} catch (error) {
-		console.log('Error', error);
-		logger.error('changeItemData error', error);
+		logger.error('changeItemData error: ' + error);
 		return res.status(409).send('Failed to change ' + prop + ' to ' + valu + '!');
 	}
 });
@@ -584,7 +597,7 @@ router.get('/changeItemData', async (req, res) => {
 
 // CONTROLLER API -----------------------------------------------------------------------------
 
-router.get('/item/play', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/item/play', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.info = ack2
 	dataOut.status = 200;
@@ -595,7 +608,7 @@ router.get('/item/play', spxAuth.CheckAPIKey, async (req, res) => {
 });
 
 
-router.get('/item/continue', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/item/continue', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.status = 200;
 	dataOut.message = 'OK';
@@ -606,7 +619,7 @@ router.get('/item/continue', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end item continue
 
 
-router.get('/item/stop', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/item/stop', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.status = 200;
 	dataOut.message = 'OK';
@@ -617,66 +630,61 @@ router.get('/item/stop', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end item stop
 
 
-router.get('/rundown/focusNext/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/focusNext/', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.info = ack2
 	dataOut.APIcmd = 'RundownFocusNext';
-	dataOut.apikey = req.query.apikey || '';
 	io.emit('SPXMessage2Controller', dataOut);
 	res.status(200).json(dataOut);
 }); // end focusNext
 
 
-router.get('/rundown/focusPrevious/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/focusPrevious/', api, async (req, res) => {
 	let dataOut = {};
 	dataOut.info = ack2
 	dataOut.APIcmd = 'RundownFocusPrevious';
-	dataOut.apikey = req.query.apikey || '';
 	io.emit('SPXMessage2Controller', dataOut);
 	res.status(200).json(dataOut);
 }); // end focusPrevious
 
 
-router.get('/rundown/focusFirst/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/focusFirst/', api, async (req, res) => {
   let dataOut = {};
   dataOut.info    = ack2
   dataOut.APIcmd  = 'RundownFocusFirst';
-  dataOut.apikey  = req.query.apikey || '';
   io.emit('SPXMessage2Controller', dataOut);
   res.status(200).json(dataOut);
 }); // end focusFirst
 
-router.get('/rundown/focusLast/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/focusLast/', api, async (req, res) => {
   let dataOut = {};
   dataOut.info    = ack2
   dataOut.APIcmd  = 'RundownFocusLast';
-  dataOut.apikey  = req.query.apikey || '';
   io.emit('SPXMessage2Controller', dataOut);
   res.status(200).json(dataOut);
 }); // end focusLast
 
-router.get('/rundown/focusByID/:id', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/focusByID/:id', api, async (req, res) => {
   let dataOut = {};
   dataOut.info    = ack2;
   dataOut.APIcmd  = 'RundownFocusByID';
-  dataOut.apikey  = req.query.apikey || '';
   dataOut.itemID  = req.params.id;
   io.emit('SPXMessage2Controller', dataOut);
   res.status(200).send('Sent request to controller: ' + JSON.stringify(dataOut));
 }); // end focusByID
 
 
-// router.get('/rundown/focusFirst/', spxAuth.CheckAPIKey, async (req, res) => {
+// router.get('/rundown/focusFirst/', api, async (req, res) => {
 // 	res.status(501).json(notInSolo);
 // }); // end focusFirst
 
 
-// router.get('/rundown/focusLast/', spxAuth.CheckAPIKey, async (req, res) => {
+// router.get('/rundown/focusLast/', api, async (req, res) => {
 // 	res.status(501).json(notInSolo);
 // }); // end focusLast
 
 
-// router.get('/rundown/focusByID/:id', spxAuth.CheckAPIKey, async (req, res) => {
+// router.get('/rundown/focusByID/:id', api, async (req, res) => {
 // 	res.status(501).json(notInSolo);
 // }); // end focusByID
 
@@ -696,11 +704,11 @@ function sendItemCommandByID(APIcmd) {
 	};
 }
 
-router.get('/item/play/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemPlayID'));
+router.get('/item/play/:id', api, sendItemCommandByID('ItemPlayID'));
 
-router.get('/item/continue/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemContinueID'));
+router.get('/item/continue/:id', api, sendItemCommandByID('ItemContinueID'));
 
-router.get('/item/stop/:id', spxAuth.CheckAPIKey, sendItemCommandByID('ItemStopID'));
+router.get('/item/stop/:id', api, sendItemCommandByID('ItemStopID'));
 
 
 // Validates playout targets given to an API call: a web renderer layer
@@ -750,7 +758,7 @@ function resolvePlayoutTargets({ playserver, playchannel, playlayer, webplayout 
 }
 
 
-router.get('/invokeTemplateFunction/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/invokeTemplateFunction/', api, async (req, res) => {
 	// Calls a function in a template that is already on air.
 	// ?playserver=OVERLAY&playchannel=1&playlayer=19&webplayout=19&function=myFunc&params=Hello%20World
 	const fail = (status, message, warnings) => {
@@ -801,14 +809,14 @@ router.get('/invokeTemplateFunction/', spxAuth.CheckAPIKey, async (req, res) => 
 }); // end invokeTemplateFunction
 
 
-router.get('/invokeExtensionFunction/', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/invokeExtensionFunction/', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end invokeExtensionFunction
 
 
 // SERVER API ----------------------------------------------------------------------------------
 
-router.post('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
+router.post('/directplayout', api, async (req, res) => {
 	// Plays, continues or stops a template with the given data, without a
 	// rundown item. Optionally the data and on-air state are saved to a
 	// rundown item (updateRundownItem.persist), and controllers showing that
@@ -1007,47 +1015,47 @@ async function runDirectPlayout(spec, isAutoOut = false) {
 }
 
 
-router.get('/directplayout', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/directplayout', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end directplayout
 
 
-router.get('/getprojects', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/getprojects', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end getprojects
 
 
-router.get('/allrundowns', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/allrundowns', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end allrundowns
 
 
-router.get('/getrundowns', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/getrundowns', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end getrundowns
 
 
-router.get('/gettemplates', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/gettemplates', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end gettemplates
 
 
-router.get('/getlayerstate', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/getlayerstate', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end getlayerstate
 
 
-router.get('/executeScript', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/executeScript', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end executeScript file
 
 
-router.get('/getFileList', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/getFileList', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end getFileList
 
 
-router.post('/saveCustomJSON', spxAuth.CheckAPIKey, async (req, res) => {
+router.post('/saveCustomJSON', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end saveCustomJSON
 
@@ -1066,7 +1074,7 @@ async function runPlayout(body) {
 }
 
 
-router.get('/controlRundownItemByID', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/controlRundownItemByID', api, async (req, res) => {
 	// Plays, continues or stops an item of a rundown file on the server, so
 	// unlike /item/* this does not need the rundown open in a controller.
 	// ?file=Project/Rundown&item=1234567890&command=play|continue|stop
@@ -1226,7 +1234,7 @@ function scheduleAutoOut(out, keys, what, stop) {
 }
 
 
-router.get('/rundown/get', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/get', api, async (req, res) => {
 	// The rundown currently open in the controller, as kept in memory
 	// (same format as the rundown file).
 	if (!global.rundownData || !global.rundownData.templates) {
@@ -1236,12 +1244,12 @@ router.get('/rundown/get', spxAuth.CheckAPIKey, async (req, res) => {
 }); // end get current rundown as JSON
 
 
-router.get('/rundown/json', spxAuth.CheckAPIKey, async (req, res) => {
+router.get('/rundown/json', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end get specific rundown as JSON
 
 
-router.post('/rundown/json', spxAuth.CheckAPIKey, async (req, res) => {
+router.post('/rundown/json', api, async (req, res) => {
 	res.status(501).json(notInSolo);
 }); // end create or update rundown as JSON
 

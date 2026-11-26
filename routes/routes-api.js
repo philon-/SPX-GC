@@ -12,10 +12,9 @@ const logger = require('../utils/logger');
 logger.debug('API-route loading...');
 const spx = require('../utils/spx_server_functions.js');
 const xlsx = require('node-xlsx').default;
-
-// --- WATCHOUT!!!! v1.3.3 disabled --------
-// const { now } = require("moment");
-// const { constants } = require("buffer");
+const access = require('../utils/spx_access.js');
+const { resolveInside, isPlainName, openFolderInOS } = require('../utils/spx_paths.js');
+const ui = access.requireUiAccess; // UI-internal endpoints, see utils/spx_access.js
 
 // ROUTES -------------------------------------------------------------------------------------------
 router.get('/', function (req, res) {
@@ -23,56 +22,45 @@ router.get('/', function (req, res) {
 });
 
 
-router.get('/files', async (req, res) => {
+router.get('/files', ui, async (req, res) => {
   const fileListAsJSON = await GetDataFiles();
   res.send(fileListAsJSON);
 }); // file
 
 
-router.get('/openFileFolder/', async (req, res) => {
-  // Added in 1.3.1. And fixed in 1.3.2... 
-  // Added optional parameter forceFolder to open a different folder than templates.
+router.get('/openFileFolder/', ui, async (req, res) => {
+  // Opens ASSETS/<openFolderOnly>, or the folder of template <file>, in the
+  // OS file manager. Only folders inside ASSETS can be opened.
   if (config.general.disableOpenFolderCommand == true) {
     let msg = 'openFileFolder -command disabled in config.';
-    logger.warn(msg);  
+    logger.warn(msg);
     return res.status(403).send(msg);
   }
-  let dirpath, folder = null;
+  const assets = path.join(spx.getStartUpFolder(), 'ASSETS');
+  let folder = null;
   if (req.query.openFolderOnly) {
-    folder = path.join(spx.getStartUpFolder(), 'ASSETS', req.query.openFolderOnly);
-    // folder = path.dirname(dirpath);
+    folder = resolveInside(assets, String(req.query.openFolderOnly));
   } else {
-    let relpath = req.query.file || '';
     if (!req.query.file) {
       let msg = 'openFileFolder -command requires a file parameter.';
-      logger.warn(msg);  
+      logger.warn(msg);
       return res.status(403).send(msg);
     }
-    filepath = path.join(spx.getStartUpFolder(), 'ASSETS', 'templates', relpath);
-    folder = path.dirname(filepath);
+    const filepath = resolveInside(path.join(assets, 'templates'), String(req.query.file));
+    folder = filepath && path.dirname(filepath);
   }
 
-  // Added in 1.3.1 for security: if not found nothing is done.
-  if (!fs.existsSync) {
-    logger.error('Folder ' + folder + ' does not exist.');
-    return res.status(404).send('Folder ' + folder + ' does not exist.');
+  if (!folder || !fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
+    logger.error('openFileFolder: folder not found in ASSETS: ' + (req.query.openFolderOnly || req.query.file));
+    return res.status(404).send('Folder not found.');
   }
 
-  // open folder in each operating system
-  if (process.platform === 'darwin') {
-    require('child_process').exec('open "' + folder + '"');
-  } else if (process.platform === 'win32') {
-    require('child_process').exec('explorer "' + folder + '"');
-  } else if (process.platform === 'linux') {
-    require('child_process').exec('xdg-open "' + folder + '"');
-  } else {
-    logger.error('Unknown operating system: ' + process.platform);
-  }
+  openFolderInOS(folder);
   res.sendStatus(200)
 }); // openFileFolder of a template for editing
 
 
-router.get('/licBasic/', async (req, res) => {
+router.get('/licBasic/', ui, async (req, res) => {
   // added in 1.1.1 - license check. Minor tweaks in 1.1.3
   // Format:
   // 4x?rot(pmac)10x? | AA-AA-33-UQ-GZ-ZX-BB-BB-BB-BB
@@ -88,7 +76,7 @@ router.get('/licBasic/', async (req, res) => {
 }); // GET licBasic check ended
 
 
-router.get('/rotBasic/', async (req, res) => {
+router.get('/rotBasic/', ui, async (req, res) => {
   // Require host-id, returns key.
   let rotlic = spx.rot(req.query.id);
   let soclic = spx.dashify(spx.salt(4) + rotlic + spx.salt(8));
@@ -98,50 +86,45 @@ router.get('/rotBasic/', async (req, res) => {
 }); // GET rotBasic/?id=12345678
 
 
-router.get('/logger/', async (req, res) => {
-  // Minimalistic GET logger for template messages
-  let message = req.query.message
-  let source  = req.query.source
-  let level   = req.query.level.toLowerCase()
-  let channel = req.query.channel
-  let msg = '(api/logger, ' + channel + ', ' + source + '): ' + message
-  // console.log(msg);
-  eval('logger.' + level + '(msg)'); // nasty, eh?
+// Minimalistic logger for template messages (GET query or POST body:
+// message, source, channel, level). Templates call this without a login.
+function logTemplateMessage(params, res) {
+  const level = String(params.level || 'info').toLowerCase();
+  if (!access.isLogLevel(level)) {
+    return res.status(400).send('Unknown log level. Use error, warn, info, verbose or debug.');
+  }
+  logger[level]('(api/logger, ' + params.channel + ', ' + params.source + '): ' + params.message);
   res.sendStatus(200)
-}); // GET logger route ended
+}
+
+router.get('/logger/', (req, res) => logTemplateMessage(req.query || {}, res));
+
+router.post('/logger/', (req, res) => logTemplateMessage(req.body || {}, res));
 
 
-router.post('/logger/', async (req, res) => {
-  // Minimalistic POST logger for template messages
-  let message = req.body.message
-  let source  = req.body.source
-  let level   = req.body.level.toLowerCase()
-  let channel = req.body.channel
-  let msg = '(api/logger, ' + channel + ', ' + source + '): ' + message
-  // console.log(msg);
-  eval('logger.' + level + '(msg)'); // nasty, eh?
-  res.sendStatus(200)
-}); // POST logger route ended
-
-
-router.post('/browseFiles/', async (req, res) => {
+router.post('/browseFiles/', ui, async (req, res) => {
   // This is axios ajax handler for file browser on dbl click on a folder
   // REQUEST: current folder and next folder name
   // RETURNS: json data with folder and file arrays
   // 1.1.0 - refactored navigation process to use '..' for parent folder.
-  let curFolder   = req.body.curFolder || ".";
-  let tgtFolder   = req.body.tgtFolder || "";
+  // The browse root (rootFolder) must be inside ASSETS, and navigation
+  // stops at the root.
+  const assets = path.resolve(spx.getStartUpFolder(), 'ASSETS');
+  let curFolder   = String(req.body.curFolder || ".");
+  let tgtFolder   = String(req.body.tgtFolder || "");
   let extension   = req.body.extension || "HTM";
-  let rootFolder  = req.body.rootFolder || path.join(spx.getStartUpFolder(), 'ASSETS');
-  let BrowseFolder = path.join(curFolder, tgtFolder);
+  let osRootPath  = resolveInside(assets, String(req.body.rootFolder || assets));
+  if (!osRootPath) {
+    logger.warn('browseFiles: root folder outside ASSETS refused: ' + req.body.rootFolder);
+    return res.status(403).send('Browsing is limited to the ASSETS folder.');
+  }
 
-  let osRootPath = path.resolve(rootFolder)
-  let osTargPath = path.resolve(BrowseFolder)
+  let osTargPath = resolveInside(osRootPath, path.resolve(curFolder, tgtFolder));
   let navigateTo = osTargPath;
   let feedbackMs = '';
 
-  if ( osTargPath.length <= osRootPath.length ) {
-    logger.verbose('Targeting beyond limits, sending root-identifier. Path: '  + osTargPath);
+  if ( !osTargPath || osTargPath === osRootPath ) {
+    logger.verbose('Targeting beyond limits, sending root-identifier. Path: '  + path.resolve(curFolder, tgtFolder));
     navigateTo = osRootPath;
     feedbackMs = 'root';
   } else {
@@ -162,7 +145,12 @@ router.post('/readExcelData', async (req, res) => {
   // var excelFile = path.join(__dirname, '..', 'ASSETS', req.body.filename); // fails when packaged
   // Improved in 1.1.1 - Return cached data also if fileref is empty (for some reason).
   try {
-    var excelFile = path.join(spx.getStartUpFolder(), 'ASSETS', req.body.filename); // v.1.0.15: getStartUpFolder()
+    // Templates call this without a login: only files inside ASSETS.
+    var excelFile = resolveInside(path.join(spx.getStartUpFolder(), 'ASSETS'), req.body.filename || '');
+    if (!excelFile) {
+      logger.warn('readExcelData: file outside ASSETS refused: ' + req.body.filename);
+      return res.status(403).send('Excel files must be inside the ASSETS folder.');
+    }
     var workSheetsData;
     let timenow = Date.now(); 
     // console.log('Excel cache age ' + (timenow - excel.readtime) + ' ms');
@@ -195,33 +183,40 @@ router.post('/readExcelData', async (req, res) => {
 }); // POST readExcelData to get Excel data from file
 
 
-router.post('/savefile/:filebasename', async (req, res) => {
+router.post('/savefile/:filebasename', ui, async (req, res) => {
   spx.talk('Saving file ' + req.params.filebasename);
+  let datafile = '';
   try {
     if (!req.params.filebasename) {
       throw new Error("Filename missing, cannot save file.");
     }
-    let datafile = path.join(directoryPath, req.params.filebasename) + '.json';
+    datafile = resolveInside(directoryPath, req.params.filebasename + '.json');
+    if (!datafile) {
+      return res.status(403).send('Files can only be saved inside the dataroot folder.');
+    }
     logger.debug('Saving file ' + datafile + '...');
     let data = req.body;
     await spx.writeFile(datafile,data);
     res.status(200).send('OK, created file ' + datafile); // ok 200 AJAX RESPONSE
   } catch (error) {
-    logger.error('Error while saving ' + datafile + ': ' + err);
-    res.status(500).send(error);
+    logger.error('Error while saving ' + datafile + ': ' + error);
+    res.status(500).send(String(error));
   }; //file written
 }); // POST savefile API route ended
 
-router.post('/saverundownfile/:projectName/:rundownName', async (req, res) => {
+router.post('/saverundownfile/:projectName/:rundownName', ui, async (req, res) => {
   // Added in 1.3.0
   // Used by extensions that will modify rundowns and save them back to the server.
   // This will also send a message to the UI to request a reload.
-  console.log('Saving rundown file ' + req.params.rundownName + ' in project ' + req.params.projectName + '...');
+  logger.verbose('Saving rundown file ' + req.params.rundownName + ' in project ' + req.params.projectName + '...');
   try {
-    if (!req.params.projectName || !req.params.rundownName) {
-      throw new Error("Project or filename missing from request, cannot save file.");
+    if (!isPlainName(req.params.projectName) || !isPlainName(req.params.rundownName)) {
+      return res.status(400).send('Project and rundown must be plain names.');
     }
-    let datafile = path.join(directoryPath, req.params.projectName, 'data', req.params.rundownName) + '.json';
+    let datafile = resolveInside(directoryPath, req.params.projectName, 'data', req.params.rundownName + '.json');
+    if (!datafile) {
+      return res.status(403).send('Rundowns can only be saved inside the dataroot folder.');
+    }
     logger.debug('Saving rundown file ' + datafile + '...');
     let data = req.body;
     await spx.writeFile(datafile,data);
@@ -239,11 +234,14 @@ router.post('/saverundownfile/:projectName/:rundownName', async (req, res) => {
 }); // POST savefile API route ended
 
 
-router.post('/exportCSVfile', async (req, res) => {
+router.post('/exportCSVfile', ui, async (req, res) => {
   // console.log('Exporting CSV...');
   try {
     let showFolder  = req.body.foldername || "";
     let datafile    = req.body.datafile || "";
+    if (!isPlainName(showFolder) || !isPlainName(datafile)) {
+      return res.status(400).send('foldername and datafile must be plain names.');
+    }
     let dataJSONfile= path.join(spx.getDatarootFolder(), showFolder, 'data', datafile + '.json'); // Changed in 1.3.1
     let rundownData = await spx.GetJsonData(dataJSONfile);
     let CSVdata = ''

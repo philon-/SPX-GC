@@ -16,6 +16,15 @@
 * API: the server stops API playouts with a numeric out after that time
 * API docs updated for the above
 * Security: updates axios to 1.x, glob to 14 and express-handlebars to 9, forces a fixed ws version (used by osc and jsdom), and replaces the ip package with a built-in helper. `npm audit` reports no vulnerabilities.
+* Security: fixes remote code execution through `/api/logger` and `/CCG/control` (request data was passed to `eval`) and command injection through `/api/openFileFolder`
+* Security: paths from requests (rundown, project, Excel and browse folders, saved files) must stay inside the dataroot or ASSETS folder
+* Security: `/api/*` and `/CCG/*` require a login when a username is configured. Template endpoints (`/api/logger`, `/api/readExcelData`, `/api/v1/feedproxy`, `/api/v1/version`) stay open
+* Security: requests that a browser sends on behalf of a page from another site are refused (403), except template endpoints, pages and static files, or with a valid API key. New config options: `general.allowedOrigins` (origins allowed to call SPX from a browser, also used for CORS) and `general.allowCrossSiteRequests: true` (turns the check off)
+* Security: the first-run auth policy page can no longer be used to switch login off after a password is set
+* Security: passwords are stored as salted scrypt hashes. Passwords saved in the old format still work and are converted on the next login
+* Security: random session secret per install (saved to `.spx_session_secret`, next to the app)
+* API: denied API calls answer **401** (was 200 with an `error` field; the field is still there). The API key can also be sent as an `X-API-Key` header. API keys are no longer written to the access log or sent to socket clients
+* Socket: messages relayed to renderers (`SPXWebRendererMessage`) need a logged-in session when login is on, and are refused from other sites when it is off
 
 
 # Published releases

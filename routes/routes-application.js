@@ -18,13 +18,52 @@ const autoOut = require('../utils/spx_autoout.js');
 const spxAuth = require('../utils/spx_auth.js');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
-const cors = require('cors');
+const { resolveInside, isPlainName } = require('../utils/spx_paths.js');
+const access = require('../utils/spx_access.js');
 const { timeStamp } = require("console");
 const http = require('http');
 
+// Project and rundown names in URLs become file system paths: they must be
+// plain names (no "/", "\" or ".."). Express decodes %2F before this runs.
+for (const name of ['foldername', 'filename', 'folder', 'file']) {
+	router.param(name, (req, res, next, value) => {
+		if (isPlainName(value)) return next();
+		logger.warn('Refused invalid ' + name + ' in URL: ' + value);
+		return res.status(400).send('Invalid ' + name + '.');
+	});
+}
+
+// The same for names and rundown paths that the UI sends in request bodies:
+// names must be plain, and full rundown paths must be inside the dataroot.
+const BODY_NAME_FIELDS = ['showFolder', 'foldername', 'filebasename', 'foldname', 'filename', 'foldnam', 'orgname', 'newname'];
+const BODY_RUNDOWN_PATH_FIELDS = ['datafile', 'rundownfile', 'RundownFile'];
+router.use((req, res, next) => {
+	const body = req.body;
+	if (!body || typeof body !== 'object') return next();
+	const refuse = (field, value) => {
+		logger.warn('Refused invalid ' + field + ' in ' + req.path + ': ' + value);
+		return res.status(400).send('Invalid ' + field + '.');
+	};
+	for (const field of BODY_NAME_FIELDS) {
+		const value = body[field];
+		if (value !== undefined && value !== '' && !isPlainName(value)) return refuse(field, value);
+	}
+	for (const field of BODY_RUNDOWN_PATH_FIELDS) {
+		const value = body[field];
+		if (value && !resolveInside(spx.getDatarootFolder(), path.resolve(String(value)))) return refuse(field, value);
+	}
+	const link = body.updateRundownItem;
+	if (link && typeof link === 'object') {
+		if ((link.project && !isPlainName(link.project)) || (link.rundown && !isPlainName(link.rundown))) {
+			return refuse('updateRundownItem', link.project + '/' + link.rundown);
+		}
+	}
+	next();
+});
+
 // ROOT ROUTES ----------------------------------------------------------------------------------------------
 
-router.get('/', spxAuth.CheckLogin, cors(), spx.getNotificationsMiddleware, async function (req, res) {
+router.get('/', spxAuth.CheckLogin, spx.getNotificationsMiddleware, async function (req, res) {
 	await SaveRundownDataToDisc(); // Added in 1.0.15
 	let currVer = vers;
 	let greeting = config.general.greeting || '';
@@ -119,47 +158,44 @@ router.post('/', spxAuth.CheckLogin, function (req, res) {
 	res.redirect('/');
 }); // post / end
 
-router.post('/saveauthpolicy', function (req, res) {
-	// save settings to config and move on
-	let configFile = global.configfileref; // './config.json';
+router.post('/saveauthpolicy', async function (req, res) {
+	// Saves the choice of the first-run auth policy page (login or no
+	// login). Allowed only while that page is what SPX shows (a username
+	// without a password), or for a logged-in user. Otherwise anyone could
+	// switch login off.
+	const firstRun = !!config.general.username && !config.general.password;
+	if (!firstRun && !access.hasLoginSession(req)) {
+		logger.warn('saveauthpolicy: refused, auth policy is already set.');
+		return res.status(403).send('Auth policy is already set. Log in to change it.');
+	}
 
-	let configData;
-	let user;
-	let pass;
-
+	let user = "";
+	let pass = "";
 	if (req.body.policy == "1") {
+		if (!req.body.username || !req.body.password) {
+			return res.status(400).send('Username and password are required.');
+		}
 		logger.debug('saveauthpolicy: Use auth, set user-pass fields in config')
 		user = req.body.username;
 		pass = spx.hash(req.body.password);
-	}
-	else {
+	} else {
 		logger.debug('saveauthpolicy: Dont use auth, clear user-pass fields in config');
-		user = "";
-		pass = "";
 	}
 
 	try {
-		async function saveAndReadConfig() {
-			// console.log('Reading config');
-			configData = await GetJsonData(configFile);
-			// console.log('Changing values');
-			configData.general.username = user;
-			configData.general.password = pass;
-			// console.log('Writing config');
-			await spx.writeFile(configFile, configData);
-			// console.log('Re-reading config');
-			await cfg.readConfig();
-			res.redirect('/');
-		};
-		saveAndReadConfig();
+		const configFile = global.configfileref;
+		const configData = await GetJsonData(configFile);
+		configData.general.username = user;
+		configData.general.password = pass;
+		await spx.writeFile(configFile, configData);
+		await cfg.readConfig();
+	} catch (error) {
+		logger.error('saveauthpolicy: error while saving config: ' + error);
 	}
-	catch (error) {
-		logger.error('saveAndReadConfig() Error while saving file: ', error);
-		res.redirect('/');
-	};
+	res.redirect('/');
 }); // post /saveauthpolicy end
 
-router.get('/config', cors(), spxAuth.CheckLogin, async (req, res) => {
+router.get('/config', spxAuth.CheckLogin, async (req, res) => {
 	// show application config (send global.config as "config" data to the view, see options object below)
 	await SaveRundownDataToDisc(); // Added in 1.0.15
 	let recents = config.general.recents || [] // added in 1.1.0
@@ -244,7 +280,7 @@ router.post('/config', spxAuth.CheckLogin, async (req, res) => {
 
 }); // post /config end
 
-router.get('/shows', cors(), spxAuth.CheckLogin, async (req, res) => {
+router.get('/shows', spxAuth.CheckLogin, async (req, res) => {
 	// show list of shows (folders)
 	await SaveRundownDataToDisc(); // Added in 1.0.15
 	const folderListAsJSON = await spx.GetSubfolders(config.general.dataroot);
@@ -261,7 +297,7 @@ router.get('/shows', cors(), spxAuth.CheckLogin, async (req, res) => {
 	});
 }); // get /shows end
 
-router.get('/show/:foldername', cors(), spxAuth.CheckLogin, async (req, res) => {
+router.get('/show/:foldername', spxAuth.CheckLogin, async (req, res) => {
 	// Show episodes (files in folder 'data')
 	const fileListAsJSON = await spx.GetDataFiles(config.general.dataroot + "/" + req.params.foldername + "/data/");
 	await SaveRundownDataToDisc(); // Added in 1.0.15
@@ -289,7 +325,6 @@ router.get('/show/:foldername', cors(), spxAuth.CheckLogin, async (req, res) => 
 
 router.get(
 	'/show/:foldername/config',
-	cors(),
 	spxAuth.CheckLogin,
 	async (req, res) => {
 		//  Show Configuration
@@ -748,7 +783,7 @@ router.delete('/shows/:foldername', spxAuth.CheckLogin, async (req, res) => {
 }); // delete /shows/:foldername end
 
 
-router.get('/gc/:foldername/:filename/:mode?', cors(), spxAuth.CheckLogin, async (req, res) => {
+router.get('/gc/:foldername/:filename/:mode?', spxAuth.CheckLogin, async (req, res) => {
 	// G R A P H I C   C O N T R O L L E R   M A I N   V I E W
 	let datafile = path.join(config.general.dataroot, req.params.foldername, 'data', req.params.filename) + '.json';
 
