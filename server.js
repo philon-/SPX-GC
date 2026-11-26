@@ -71,6 +71,7 @@ if (!configfileref) {
 const spx = require('./utils/spx_server_functions.js');
 const logger = require('./utils/logger.js');
 const access = require('./utils/spx_access.js');
+const { escapeHtml: esc, jsString } = require('./utils/spx_html.js');
 
 // STATICS
 app.use(express.static(path.join(__dirname,('static'))))
@@ -117,7 +118,7 @@ app.engine('handlebars', exphbs.engine({
 
     max5: function (data) {
       if (parseInt(data)>5) { data = 5; }
-      return String(data);
+      return esc(data);
     },
 
     // Convert JSON data and return as JSONstring.
@@ -192,7 +193,7 @@ app.engine('handlebars', exphbs.engine({
         let cfgSrv = currentServer.toUpperCase();
         let sel = "";
         if (curSrv==cfgSrv){ sel="selected" }
-        html += '<option value="' + curSrv + '" ' + sel + '>' + curSrv + '</option>';
+        html += '<option value="' + esc(curSrv) + '" ' + sel + '>' + esc(curSrv) + '</option>';
       });
       return html
     },
@@ -224,42 +225,42 @@ app.engine('handlebars', exphbs.engine({
       arr.forEach((control,index) => {
           html += '<tr>'
           html += '<td width="50%">'
-          html += '<span class="spxTableHead">' + control.description + '</span>'
+          html += '<span class="spxTableHead">' + esc(control.description) + '</span>'
           html += '</td>'
           html += '<td>'
           switch (control.ftype){
 
             case 'button':
-              html += '<button type="button" class="wide spxFlexItem btn ripple ' + control.bgclass + '" ';
-              html += 'data-spx-color="' + control.bgclass + '" ';
-              html += 'onClick="' + control.fcall + '" ';
-              html += '>' + control.text + '</button>\n';
+              html += '<button type="button" class="wide spxFlexItem btn ripple ' + esc(control.bgclass) + '" ';
+              html += 'data-spx-color="' + esc(control.bgclass) + '" ';
+              html += 'onClick="' + esc(control.fcall) + '" ';
+              html += '>' + esc(control.text) + '</button>\n';
               break;
 
             case 'togglebutton':
-              html += '<button type="button" class="wide spxFlexItem btn ripple ' + control.bgclass + '" ';
-              html += 'data-spx-color="' + control.bgclass + '" ';
-              html += 'data-spx-playtext="' + control.text0 + '" ';
-              html += 'data-spx-stoptext="' + control.text1 + '" ';
+              html += '<button type="button" class="wide spxFlexItem btn ripple ' + esc(control.bgclass) + '" ';
+              html += 'data-spx-color="' + esc(control.bgclass) + '" ';
+              html += 'data-spx-playtext="' + esc(control.text0) + '" ';
+              html += 'data-spx-stoptext="' + esc(control.text1) + '" ';
               html += 'data-spx-status="false" ';
-              html += 'onClick="' + control.fcall + '" ';
-              html += '>' + control.text0 + '</button>\n';
+              html += 'onClick="' + esc(control.fcall) + '" ';
+              html += '>' + esc(control.text0) + '</button>\n';
               break;
 
             case 'selectbutton':
               html += '<table class="wide" style="margin:0, padding:0; border:0px;">\n';
               html += '<tr><td width="60%">\n';
-              html += '<select id="select' + index + '" class="wide btn ' + control.bgclass + '">\n';
+              html += '<select id="select' + index + '" class="wide btn ' + esc(control.bgclass) + '">\n';
               if (control.items) {
                 control.items.forEach((option,nro) => {
-                  html += '<option value="' + option.value + '">' + option.text + '</option>\n';
+                  html += '<option value="' + esc(option.value) + '">' + esc(option.text) + '</option>\n';
                 });
               }
               html += '</td><td>\n';
-              html += '<button type="button" class="wide spxFlexItem btn ripple ' + control.bgclass + '" ';
-              html += 'data-spx-color="' + control.bgclass + '" ';
-              html += 'onClick="' + control.fcall + '(\'select' + index + '\');" ';
-              html += '>' + control.text + '</button>\n';
+              html += '<button type="button" class="wide spxFlexItem btn ripple ' + esc(control.bgclass) + '" ';
+              html += 'data-spx-color="' + esc(control.bgclass) + '" ';
+              html += 'onClick="' + esc(control.fcall) + '(\'select' + index + '\');" ';
+              html += '>' + esc(control.text) + '</button>\n';
               html += '</td></tr></table>\n';
               break;
             
@@ -277,7 +278,8 @@ app.engine('handlebars', exphbs.engine({
     // generate a pretty string for each template to display playout configs
     GeneratePlayoutInfo(playserver='', playchannel='', playlayer='', webplayout='', out='' , itemid='') {
 
-      webplayout = spx.max5(webplayout);
+      webplayout = esc(spx.max5(webplayout));
+      [playserver, playchannel, playlayer, out, itemid] = [playserver, playchannel, playlayer, out, itemid].map(esc);
 
       let html = '<div data-spx-name="playoutConfig">';
       // html += '<input type="text" data-clipboard-action="copy" data-clipboard-target="#copy' + itemid + '">';
@@ -330,17 +332,17 @@ app.engine('handlebars', exphbs.engine({
       // get show profile
       // iterate all templates
       let profileFile = path.join(config.general.dataroot, currentShow, 'profile.json');
-      showProfileData = spx.GetJsonData(profileFile);
+      let showProfileData = spx.GetJsonData(profileFile) || {};
       if(!showProfileData.templates) {
         // if no templates assigned to this project
         html += '<span style="display: inline-block; margin: 10px;padding: 0.6em 1.7em; background: #0000001c; color:#ffffff; font-size:0.7em; border-radius:2em; text-align:center;">' + spx.lang('warning.notemplates') + '</span>';
         return html
       } 
       showProfileData.templates.forEach((template,i) => {
-        html += '<div onClick="addSelectedTemplate(' + i + ');" class="addTemplateItem row_accent' + template.uicolor + '">\n';
+        html += '<div onClick="addSelectedTemplate(' + i + ');" class="addTemplateItem row_accent' + esc(template.uicolor) + '">\n';
         html += '<button type="button" class="addbtn bg_blue ripple" onClick="addSelectedTemplate(' + i + ');" style="float:right;">+</button>\n';
-        html += '<span class="templateName">' + spx.prettifyName(template.relpath) + '</span><BR>\n';
-        html += '<span class="templateDesc">' + template.description + '&nbsp;</span>\n';
+        html += '<span class="templateName">' + esc(spx.prettifyName(template.relpath)) + '</span><BR>\n';
+        html += '<span class="templateDesc">' + esc(template.description) + '&nbsp;</span>\n';
         html += '</div>\n';
       });
       return html
@@ -352,17 +354,17 @@ app.engine('handlebars', exphbs.engine({
       // get show profile
       // iterate all templates
       let profileFile = path.join(config.general.dataroot, currentShow, 'profile.json');
-      showProfileData = spx.GetJsonData(profileFile);
+      let showProfileData = spx.GetJsonData(profileFile) || {};
       if(!showProfileData.templates) {
         // if no templates assigned to this project
         html += '<span style="display: inline-block; width: 100%; margin: 10px;padding: 0.6em 1.7em; background: #0000001c; color:#ffffff; font-size:0.7em; border-radius:2em; text-align:center;">' + spx.lang('warning.notemplates') + '</span><br><br>';
         return html
       } 
       showProfileData.templates.forEach((template,i) => {
-        html += '<div onClick="addSelectedTemplate(' + i + ');" class="addTemplateItem row_accent' + template.uicolor + '">\n';
+        html += '<div onClick="addSelectedTemplate(' + i + ');" class="addTemplateItem row_accent' + esc(template.uicolor) + '">\n';
         html += '<button type="button" class="addbtn bg_blue ripple" onClick="event.stopPropagation(); addSelectedTemplate(' + i + ');" style="float:right;">+</button>\n';
-        html += '<span class="templateName">' + spx.prettifyName(template.relpath) + '</span><BR>\n';
-        html += '<span class="templateDesc">' + template.description + '&nbsp;</span>\n';
+        html += '<span class="templateName">' + esc(spx.prettifyName(template.relpath)) + '</span><BR>\n';
+        html += '<span class="templateDesc">' + esc(template.description) + '&nbsp;</span>\n';
         html += '</div>\n';
       });
       return html
@@ -462,7 +464,7 @@ app.engine('handlebars', exphbs.engine({
         let cfgSrv = currentLayer || '-';
         let sel = "";
         if (curSrv==cfgSrv){ sel="selected" }
-        html += '<option value="' + curSrv + '" ' + sel + '>' + curSrv + '</option>';
+        html += '<option value="' + esc(curSrv) + '" ' + sel + '>' + esc(curSrv) + '</option>';
       });
       return html
     },
@@ -543,14 +545,14 @@ app.engine('handlebars', exphbs.engine({
         const list = spx.GetFilesAndFolders(BrowseFolder);
         list.foldArr.forEach(pluginName => {
           if ( pluginName.charAt(0) == '_' || pluginName.charAt(0) == '.' || pluginName === 'lib' ) {
-            html += '<!-- Note: disabled plugin ' + pluginName + ' skipped. -->\n'
+            html += '<!-- Note: disabled plugin ' + esc(pluginName).replace(/--/g, '- -') + ' skipped. -->\n'
           } else {
             logger.verbose('Loading plugin ' + pluginName );
-            html += '<script type="module" src="/plugins/' + pluginName + '/init.js"></script>\n'
+            html += '<script type="module" src="/plugins/' + esc(encodeURIComponent(pluginName)) + '/init.js"></script>\n'
           }
         })
       } catch (error) {
-        html = '<!-- hookLoadControllerPlugins error: ' + error + ' -->';
+        html = '<!-- hookLoadControllerPlugins error: ' + esc(error).replace(/--/g, '- -') + ' -->';
       }
       return html
     },
@@ -582,7 +584,7 @@ app.engine('handlebars', exphbs.engine({
 
     // Get template name from filepath
     nameFromTemplatePath(filepath) {
-        return spx.prettifyName(filepath);
+        return esc(spx.prettifyName(filepath));
     },
 
 
@@ -665,8 +667,8 @@ app.engine('handlebars', exphbs.engine({
       html += '<td colspan="2" class="center vmid" style="background-color: #1d1e252f; padding:0.8em; border-radius:0.8em; font-size:0.6em; line-height:1.5em;">';
       html += '<span >';
       html += 'Login to this instance with<BR>';
-      html += 'user <span style="color: rgb(252, 174, 30);"><B>' + u + '</B></span>, ';
-      html += 'pass <span style="color: rgb(252, 174, 30);"><B>' + p + '</B></span>';
+      html += 'user <span style="color: rgb(252, 174, 30);"><B>' + esc(u) + '</B></span>, ';
+      html += 'pass <span style="color: rgb(252, 174, 30);"><B>' + esc(p) + '</B></span>';
       html += '</span>';
       html += '</td>';
       html += '</tr>';
@@ -692,7 +694,7 @@ app.engine('handlebars', exphbs.engine({
           {
             sel = 'selected';
           }
-        html += '<option value="' + element.name + '" ' + sel + '>' + element.name.replace('.json', '') + '</option>';
+        html += '<option value="' + esc(element.name) + '" ' + sel + '>' + esc(element.name.replace('.json', '')) + '</option>';
       });
       return html
     },
@@ -731,7 +733,7 @@ app.engine('handlebars', exphbs.engine({
           if (fullFilePath == selectedValue) {
             sel = 'selected';
           }
-          html += '<option value="' + assetfolder + fileRef + '" ' + sel + '>' + fileRef  + '</option>';
+          html += '<option value="' + esc(assetfolder + fileRef) + '" ' + sel + '>' + esc(fileRef)  + '</option>';
         });
       } 
       return html
@@ -749,12 +751,12 @@ app.engine('handlebars', exphbs.engine({
         }
 
         html += '<div class="dropdown serverbtn">';
-        html += '   <i id="indicator' + i + '" class="fas fa-check-circle" style="color: 00CC00;"></i>&nbsp;<span class="serverIndicator ' + disabledClass + '" id="server' + element.name + '">' + element.name + '</span>';
+        html += '   <i id="indicator' + i + '" class="fas fa-check-circle" style="color: 00CC00;"></i>&nbsp;<span class="serverIndicator ' + disabledClass + '" id="server' + esc(element.name) + '">' + esc(element.name) + '</span>';
         html += '   <div class="dropdown-content-right">';
-        html += '     <span style="display: block; opacity: 0.4; background-color: #000; width:100%;">' + element.host + ':' + element.port + '</span>';
+        html += '     <span style="display: block; opacity: 0.4; background-color: #000; width:100%;">' + esc(element.host) + ':' + esc(element.port) + '</span>';
         html += '     <A href="#" OnClick="spx_system(\'CHECKCONNECTIONS\');return false;">Connection check</A><br>';
-        html += '     <A href="#" OnClick="clearUsedChannels(\'' + element.name + '\');">Clear all layers</A><br>';
-        html += '     <A href="#" OnClick="toggleActive(\'' + element.name + '\');">Toggle on/off</A><br>';
+        html += '     <A href="#" OnClick="clearUsedChannels(' + jsString(element.name) + ');">Clear all layers</A><br>';
+        html += '     <A href="#" OnClick="toggleActive(' + jsString(element.name) + ');">Toggle on/off</A><br>';
         html += '</div>';
         html += '</div>';
       });
@@ -774,7 +776,7 @@ app.engine('handlebars', exphbs.engine({
             return '';
           } else {
             logger.debug('DetectCustomContentPackages: returns ' + contents);
-            return '<div class="namedContentIndicator">' + contents + '</div>';
+            return '<div class="namedContentIndicator">' + esc(contents) + '</div>';
           }
         } else {
           // No file found, return empty string 
@@ -928,7 +930,7 @@ io.sockets.on('connection', function (socket) {
     delete clients[socket.id];
 
     // Notify controller of other clients lost (such as renderers closed with X)
-    data = {};
+    let data = {};
     data.spxcmd = 'clientLostNotification'
     data.source = 'windowClose'
     data.clientName = SPXClientName

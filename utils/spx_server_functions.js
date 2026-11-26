@@ -10,6 +10,7 @@ const PlayoutCCG = require('./playout_casparCG.js');
 const glob = require("glob");
 const ip = require('./spx_ip.js')
 const http = require('http');
+const { escapeHtml } = require('./spx_html.js');
 // ----------------------------------------- good until here
 // const { config } = require('process');
 
@@ -120,15 +121,14 @@ module.exports = {
       let CCGServers = this.CCGServersConfigured()
       if (!CCGServers){ return  } // exit early, no need to do any CasparCG work
       logger.verbose('checkServerConnections -function excecuting...');
-      data = { spxcmd: 'updateStatusText', status: 'Checking server connections...' };
-      io.emit('SPXMessage2Client', data);
+      io.emit('SPXMessage2Client', { spxcmd: 'updateStatusText', status: 'Checking server connections...' });
 
       config.casparcg.servers.forEach((element,i) => {
         let SrvName = element.name;
         let SocketIndex = PlayoutCCG.getSockIndex(SrvName);
         logger.verbose('Pinging ' +  SrvName + ': ' + CCGSockets[SocketIndex]);
         // console.log('Pinging ' +  SrvName + ': ' + CCGSockets[SocketIndex]);
-        data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + i, color: '#CC0000' };
+        let data = { spxcmd: 'updateServerIndicator', indicator: 'indicator' + i, color: '#CC0000' };
         let status = {}
         status.server = i + ':' + SrvName;
         status.connecting = CCGSockets[SocketIndex].connecting;
@@ -229,27 +229,27 @@ module.exports = {
             skip = false;
             switch ( fType ) {
               case "hidden":
-                html += '<span id="datapreview_' + fieldIndex + '">' + this.shortifyString(fTitl) + '</span>';
+                html += '<span id="datapreview_' + fieldIndex + '">' + escapeHtml(this.shortifyString(fTitl)) + '</span>';
                 Counter++;
                 break;
 
               case "textfield":
-                html += '<span id="datapreview_' + fieldIndex + '">' + this.shortifyString(fValu) + '</span>';
+                html += '<span id="datapreview_' + fieldIndex + '">' + escapeHtml(this.shortifyString(fValu)) + '</span>';
                 Counter++;
                 break;
 
               case "number":
-                html += '<span id="datapreview_' + fieldIndex + '">' + this.shortifyString(fValu) + '</span>';
+                html += '<span id="datapreview_' + fieldIndex + '">' + escapeHtml(this.shortifyString(fValu)) + '</span>';
                 Counter++;
                 break;
 
               case "filelist":
-                html += '<span id="datapreview_' + fieldIndex + '">' + this.shortifyString(this.fileNameFromPath(fValu)) + '</span>';
+                html += '<span id="datapreview_' + fieldIndex + '">' + escapeHtml(this.shortifyString(this.fileNameFromPath(fValu))) + '</span>';
                 Counter++;
                 break;
 
               case "dropdown":
-                html += '<span id="datapreview_' + fieldIndex + '">' + this.shortifyString(fValu) + '</span>';
+                html += '<span id="datapreview_' + fieldIndex + '">' + escapeHtml(this.shortifyString(fValu)) + '</span>';
                 Counter++;
                 break;
               
@@ -458,8 +458,9 @@ module.exports = {
       let langpath = path.join(this.getStartUpFolder(), 'locales', spxlangfile);
 
       var lang = require(langpath);
-      json = 'lang.' + str;
-      return eval(json) || str;  
+      // "button.play" -> lang.button.play
+      const value = String(str).split('.').reduce((obj, key) => (obj && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined), lang);
+      return value || str;
     } catch (error) {
       logger.error('ERROR in spx.lang (str: ' + str + '): ' + error);
       return str + " missing from " + spxlangfile;
@@ -866,57 +867,6 @@ module.exports = {
     })
   }, // renameRundown
 
-
-  salt: function (length) {
-    // Generate a salt for hashing
-    // request ..... length of salt (16)
-    // returns ..... salt string
-    try {
-      let hex = crypto.randomBytes(Math.ceil(length/2))
-        .toString('hex')
-        .slice(0,length);
-      return this.rot(hex)
-    } catch (error) {
-      logger.error('ERROR in spx.salt (length: ' + length + '): ' + error);
-      return ""  
-    }
-  },
-
-
-  rot: function (str, reverse=false) {
-    // Added in 1.1.1. - used by basic lic service
-    // Un/Scramble. Always returns uppercased string.
-    // rot('car') ......... = "ROI"
-    // rot('ROI', true) ... = "CAR"
-    try {
-      let orig = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-      let mixd = "OJN59B6VKTQEMIFZ87WUDCS4X1PHR0A23LGY"
-      let src = str.toUpperCase();
-      if (reverse) {
-          return src.replace(/./gi, c => mixd[orig.indexOf(c)])
-          // return src.replace(/./gi, c => mixd[orig.indexOf(c)])
-      } else {
-          return src.replace(/./gi, c => orig[mixd.indexOf(c)])
-          // return src.replace(/./gi, c => orig[mixd.indexOf(c)])
-      }
-    } catch (error) {
-      logger.error('ERROR in spx.rot (str: ' + str + '): ' + error);
-      return str  
-    }
-}, // rot
-
-  dashify: function (str) {
-    // add dashes to a string
-    // request ..... string to be dashed
-    // returns ..... dashed string
-    try {
-      // break string into two character groups with dashes
-      return str.match(/.{1,2}/g).join(""); // removed -
-    } catch (error) {
-      logger.error('ERROR in spx.dashify (str: ' + str + '): ' + error);
-      return ""  
-    }
-  },
 
   shortifyString: function (fullString){
     try {

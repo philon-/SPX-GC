@@ -7,22 +7,18 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const moment = require('moment');
-const directoryPath = path.normalize(config.general.dataroot);
 const logger = require('../utils/logger');
 logger.debug('Application-route loading...');
 const spx = require('../utils/spx_server_functions.js');
 const cfg = require('../utils/spx_getconf.js');
 const PlayoutCCG = require('../utils/playout_casparCG.js');
-const PlayoutWEB = require('../utils/playout_webplayer.js');
-const autoOut = require('../utils/spx_autoout.js');
 const rundownStore = require('../utils/rundown_store.js');
+const playoutService = require('../utils/playout_service.js');
 const spxAuth = require('../utils/spx_auth.js');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 const { resolveInside, isPlainName } = require('../utils/spx_paths.js');
 const access = require('../utils/spx_access.js');
-const { timeStamp } = require("console");
-const http = require('http');
 
 // Project and rundown names in URLs become file system paths: they must be
 // plain names (no "/", "\" or ".."). Express decodes %2F before this runs.
@@ -570,7 +566,7 @@ router.post('/show/:foldername/config', spxAuth.CheckLogin, async (req, res) => 
 
 			case 'addshowextra':
 				// ------------------------------------- ADDING EXTRA -----------------
-				newExtra = {};
+				let newExtra = {};
 				switch (ftype) {
 					case 'button':
 						newExtra.description = 'A new push button';
@@ -1221,399 +1217,11 @@ router.post('/gc/:foldername/:filename/', spxAuth.CheckLogin, async (req, res) =
 	}
 }); // gc post end
 
-async function playout(req, res) {
-	// Request: data object (command, datafile, templateIndex)
-	// Returns: AJAX response
-	//
-	// Handles playout commands of the rundown items in the controller.
-	// This function will collect data from datafile and will send out "stupid" 
-	// playout commands to all needed renderer interfaces.
-	//
-	// This will also persist the onair state to rundown file.
-	// 
-	// Rundown data comes from the rundown store (utils/rundown_store.js), one
-	// entry per file, and the whole read-modify-write runs under that file's
-	// lock. forceFileReadOnce re-reads the file first (API calls on rundowns
-	// that are not open in a controller).
-	try {
-		if (req.body.command == 'customAction') {
-			PlayoutWEB.webPlayoutController({ spxcmd: 'customAction', id: req.body.id, webplayout: req.body.webplayout })
-			return res.status(200).send();
-		}
 
-		let RundownFile = path.normalize(req.body?.datafile || '') // file reference (in a normal call)
-		if (req.body?.updateRundownItem?.persist) {
-			let project = req.body?.updateRundownItem?.project || '';
-			let rundown = req.body?.updateRundownItem?.rundown || '';
-			RundownFile = path.resolve(spx.getDatarootFolder(), project, 'data', rundown + '.json');
-		}
-		let usesRundown = req.body?.prepopulated != "true" || !!req.body?.updateRundownItem?.persist;
-
-		const run = () => playoutLocked(req, RundownFile, usesRundown);
-		await (usesRundown ? rundownStore.withLock(RundownFile, run) : run());
-		res.status(200).send(); // ok 200 AJAX RESPONSE
-	} // end try
-	catch (error) {
-		console.error('ERROR in /gc/playout', error);
-		logger.error('ERROR in /gc/playout. ' + error);
-		res.status(500).send('Error in /gc/playout: ' + error)  // error 500 AJAX RESPONSE
-	};
-} // playout
-
-
-// The body of playout(), run under the rundown file's lock when it uses a
-// rundown. Throws on errors.
-async function playoutLocked(req, RundownFile, usesRundown) {
-		let templateIndex = -1;
-		let dataOut = {}; // new object
-		dataOut.fields = []; // init it with an empty arr as placeholder
-		let RundownData = ""  // file JSON
-		let preventSave = false;
-		let forceDiskRead = req.body.forceFileReadOnce ? true : false; // Added in 1.3.0. Read Release Notes!
-		let autoOutTimerID = null; // Added in 1.3.0
-		let itemID = null; // Added in 1.3.2
-		let ItemData = {}; // Modified in 1.3.2
-
-		if (!usesRundown) {
-			// data in pre-generated coming in. So we can just pass that along.
-			logger.verbose('Playout command prepopulated [' + req.body.command + '] template [' + req.body.relpath + '].');
-			dataOut = req.body;
-			if (req.body.command != 'invoke' && req.body.command != 'stop') { // added stop in 1.1.4
-				dataOut.relpathCCG = req.body.relpath.split('.htm')[0]; // casparCG needs template path without extension
-			}
-			preventSave = true;
-		} else {
-			// Normal method of working (or when using directplayout persist request)
-			// We collect data from rundown first.
-			itemID = req.body?.epoch || req.body?.updateRundownItem?.itemID || '';
-			logger.verbose('Playout command [' + req.body.command + '] item [' + itemID + '] of [' + RundownFile + '].');
-
-			RundownData = await rundownStore.load(RundownFile, { fresh: forceDiskRead });
-			if (!RundownData || !Array.isArray(RundownData.templates)) {
-				throw 'Rundown [' + RundownFile + '] not found or has no items. Aborting ' + req.body.command + ' command.';
-			}
-			let projectFormat = RundownData.projectFormat || 'SPX';
-
-			RundownData.templates.forEach((template, index) => {
-				logger.debug('Matching ' + index + ': [' + template.itemID + '] (' + template.description + ') and [' + itemID + ']');
-				if (template.itemID == itemID) {
-					templateIndex = index;
-				}
-			});
-
-			if (templateIndex == -1) {
-				throw 'Requested itemID [' + itemID + '] not found on the rundown [' + RundownFile + ']! Aborting ' + req.body.command + ' command.';
-			}
-
-			ItemData = RundownData.templates[templateIndex];
-
-			dataOut.ografProps = ItemData.ografProps; // OGRAF Support
-			dataOut.projectFormat = projectFormat;       // OGRAF Support
-			dataOut.graphicPath = ItemData.graphicPath;   // OGRAF Support
-
-			dataOut.relpath = ItemData.relpath;
-			dataOut.relpathCCG = ItemData.relpath.split('.htm')[0]; // casparCG needs template path without htm/html -extension. 
-			dataOut.playserver = ItemData.playserver;
-			dataOut.playchannel = ItemData.playchannel;
-			dataOut.playlayer = ItemData.playlayer;
-			dataOut.webplayout = ItemData.webplayout;
-			dataOut.out = ItemData.out; // 1.3.0 only used with direct API calls
-			dataOut.dataformat = ItemData.dataformat || 'json'; // Changed to JSON in 1.3.0
-			ItemData.DataFields.forEach(item => {
-				// We pass data as custom JSON format and the format is changed
-				// downstream in the playout controller as per renderer's needs.
-				let FieldItem = {};
-				if (item.field) {
-					FieldItem.field = item.field;
-					if (item.value) { // TODO: bug alert (&& item.field.value) check if there IS value to begin with. Added 29.01.2021
-						FieldItem.value = spx.cleanUpString(item.value); // Added in 1.3.2
-					}
-					dataOut.fields.push(FieldItem);
-				}
-			});
-			dataOut.fields.push({ 'field': 'epochID', 'value': itemID });
-		} // else (ie read from JSON)
-
-		let playOutCommand = "";
-		if (req.body.command == 'playonce') {
-			playOutCommand = "play";
-			preventSave = true;
-			logger.verbose('Note playonce command received, preventSave = true');
-		} else {
-			playOutCommand = req.body.command;
-		}
-
-
-		// Added in 1.3.2 if directplayout is used, we need to
-		// update incoming data with the itemID.
-		// If data from API, then override
-		if (req.body?.updateRundownItem?.persist) {
-			let overrideTemplateIndex = -1;
-			RundownData.templates.forEach((template, index) => {
-				if (template.itemID == req.body.updateRundownItem.itemID) {
-					// console.log('Template FOUND', index, template.description);
-					overrideTemplateIndex = index;
-					template.DataFields.forEach((templateField, dfIndex) => {
-						// console.log('templateField', dfIndex)
-						req.body.fields.forEach((dataField, daIndex) => {
-							// note, "fields" not "DataFields"
-							// console.log('.....dataField', daIndex)
-							if (templateField.field == dataField.field) {
-								RundownData.templates[overrideTemplateIndex].DataFields[dfIndex].value = dataField.value;
-							}
-						});
-					})
-				}
-			});
-			// Rundown files keep raw values (as above); clean them up for
-			// rendering, as is done for rundown items.
-			dataOut = Object.assign({}, req.body, {
-				fields: (req.body.fields || []).map((f) => ({ field: f.field, value: spx.cleanUpString(String(f.value ?? '')) })),
-			});
-		}
-
-
-		// console.log('RundownData after mods', RundownData.templates[templateIndex]);
-
-
-
-		// Commands that load the template need it to exist; checked before
-		// anything is sent. (Stop, continue etc. still work for a template
-		// that was removed while on air.)
-		if (['play', 'preview', 'autoPlayLocal'].includes(playOutCommand) && dataOut.relpath) {
-			let templateAbsPath = path.join(spx.getStartUpFolder(), 'ASSETS', 'templates', dataOut.relpath);
-			if (!fs.existsSync(templateAbsPath)) {
-				throw (playOutCommand + ' warning! Template not found: ' + dataOut.relpath);
-			}
-		}
-
-		switch (playOutCommand) {
-
-			// == PREVIEW ===================================================
-			case 'preview':
-
-				// Send PlayoutWEB.functionCalls() if any ---------------------
-				if (dataOut.webplayout != '-' && config.general.preview != 'none') {
-					dataOut.webplayout = '1'; // force to layer 1! Changed to string in 1.0.15
-					logger.verbose('Webplayout PREVIEW: ' + dataOut.webplayout);
-					dataOut.playmode = 'preview';
-					dataOut.spxcmd = 'playTemplate';
-					PlayoutWEB.webPlayoutController(dataOut);
-				} else {
-					logger.verbose('No Webplayout playout');
-				}
-				break;
-
-			// == AUTOPLAY ==================================================
-			case 'autoPlayLocal':
-				// Update local renderer when a rundown is reloaded
-				logger.verbose('Webplayout autoPlayLocal: ' + dataOut.webplayout);
-				dataOut.spxcmd = 'playTemplate';
-				dataOut.modify = 'autoPlayLocal';
-				PlayoutWEB.webPlayoutController(dataOut);
-				break;
-
-			// == PLAY =====================================================
-			case 'play':
-				let playingSomewhere = false; // Added in 1.3.0
-
-
-				// console.log('DataOut', dataOut);
-
-
-				// Send PlayoutCCG.functionCalls() if any ---------------------
-				if (dataOut.playserver && dataOut.playserver != '-' && spx.CCGServersConfigured()) { // 1.1.3 added dataOut.playserver
-					dataOut.command = "ADD";
-					logger.verbose('CasparCG play: [' + dataOut.relpathCCG + '] ' + dataOut.playserver + '/' + dataOut.playchannel + '-' + dataOut.playlayer);
-					playingSomewhere = true;
-					PlayoutCCG.playoutController(dataOut);
-				} else {
-					logger.verbose('No CasparCG playout');
-				}
-
-				// Send PlayoutWEB.functionCalls() if any ---------------------
-				if (dataOut.webplayout && dataOut.webplayout != '-') {
-					logger.verbose('Webplayout PLAY: ' + dataOut.webplayout);
-					dataOut.spxcmd = 'playTemplate';
-					playingSomewhere = true;
-					PlayoutWEB.webPlayoutController(dataOut);
-				} else {
-					logger.warn('No Webplayout playout layer given');
-				}
-
-				// iterate all templates and allow only the latest update
-				// (for same playout) to be on-air at once
-				if (RundownData.templates) {
-					// prepopulated does not necessarily have "templates"
-					RundownData.templates.forEach((item, index) => {
-						let thisOnair = item.onair || '';
-						let thisServer = item.playserver || '-';
-						let thisChannel = item.playchannel || '1';
-						let thisLayer = item.playlayer || '1';
-						let thisWeb = item.webplayout || '-';
-						let thisOutput = thisServer.trim() + thisChannel.trim() + thisLayer.trim() + thisWeb.trim() + thisOnair.trim();
-
-						let dataOnair = 'true' // because we are in play;
-						let dataServer = dataOut.playserver || '-';
-						let dataChannel = dataOut.playchannel || '1';
-						let dataLayer = dataOut.playlayer || '1';
-						let dataWeb = dataOut.webplayout || '-';
-						let dataOutput = dataServer.trim() + dataChannel.trim() + dataLayer.trim() + dataWeb.trim() + dataOnair.trim();
-
-						if (index != templateIndex && thisOutput == dataOutput) {
-							RundownData.templates[index].onair = 'false';
-						}
-
-						if (index == templateIndex && playingSomewhere) {
-							RundownData.templates[index].onair = 'true';
-						}
-					});
-				}
-
-				// API Call executed. Should we set an autostop? (Not when the
-				// API route handles auto-out itself, see utils/spx_autoout.js.)
-				if ((forceDiskRead || req.body.referrer == 'directplayout') && !req.body.autoOutByCaller) {
-					let numeric = parseInt(dataOut.out);
-					if (isNaN(numeric)) {
-						logger.verbose('API call: out was not a number, skipping autostop.');
-					} else {
-						logger.verbose('API call: autostop item in ' + numeric + ' ms.');
-						autoOutTimerID = setTimeout(function () {
-							playoutSTOP(dataOut, templateIndex, RundownData);
-						}, numeric);
-					}
-				}
-				break;
-
-			// == NEXT / aka CONTINUE  =====================================
-			case 'next':
-
-				// Prepopulated playouts have no rundown item to mark on air.
-				if ((dataOut.playserver != '-' || dataOut.webplayout != '-') && RundownData.templates?.[templateIndex]) {
-					RundownData.templates[templateIndex].onair = 'true';
-				}
-
-				// Send PlayoutCCG.functionCalls() if any ---------------------
-				if (dataOut.playserver != '-') {
-					dataOut.command = "NEXT";
-					logger.verbose('CasparCG next: [' + dataOut.relpathCCG + '] ' + dataOut.playserver + '/' + dataOut.playchannel + '-' + dataOut.playlayer);
-					PlayoutCCG.playoutController(dataOut);
-				} else {
-					logger.verbose('No CasparCG playout');
-				}
-
-				// Send PlayoutWEB.functionCalls() if any ---------------------
-				if (dataOut.webplayout != '-') {
-					logger.verbose('Webplayout NEXT: ' + dataOut.webplayout);
-					dataOut.spxcmd = 'nextTemplate';
-					PlayoutWEB.webPlayoutController(dataOut); // refactored 20.08.2020 (note, this function handles all play, stop, next, update commands)
-					// io.emit('SPXMessage2Client', dataOut);
-				} else {
-					logger.verbose('No Webplayout playout');
-				}
-				break;
-
-			// == STOP ===================================================
-			case 'stop':
-				await playoutSTOP(dataOut);
-				if (templateIndex > -1 && RundownData.templates[templateIndex]) {
-					// Added check in 1.3.0
-					RundownData.templates[templateIndex].onair = 'false';
-				}
-				break;
-
-			// == UPDATE ===================================================
-			case 'update':
-				logger.verbose('Updating [' + dataOut.relpath + ']');
-				// RundownData.templates[templateIndex].onair='true'; // yes. no?
-
-				if (dataOut.playserver != '-') {
-					// TODO: Update functions not deeply properly tested.
-					dataOut.command = "UPDATE";
-					logger.verbose('CasparCG update: [' + dataOut.relpathCCG + '] ' + dataOut.playserver + '/' + dataOut.playchannel + '-' + dataOut.playlayer + ', dataOut: ', dataOut);
-					PlayoutCCG.playoutController(dataOut);
-				} else {
-					logger.verbose('No CasparCG playout');
-				}
-
-				// Send PlayoutWEB.functionCalls() if any
-				if (dataOut.webplayout != '-') {
-					logger.verbose('Webplayout UPDATE: ' + dataOut.webplayout);
-					dataOut.spxcmd = 'updateTemplate';
-					dataOut.fields = req.body.fields;
-					PlayoutWEB.webPlayoutController(dataOut);
-				} else {
-					logger.verbose('No Webplayout playout');
-				}
-				break;
-
-			// == INVOKE ===================================================
-			case 'invoke':
-				logger.verbose('Invoke [' + dataOut.invoke + ']');
-				// Example of expected dataOut down stream from here:
-				// dataOut.command = "invoke"
-				// dataOut.invoke  = "myTemplateFunction('hello world')"
-				if (dataOut.playserver != '-') {
-					dataOut.command = "INVOKE";
-					PlayoutCCG.playoutController(dataOut);
-				}
-
-				if (dataOut.webplayout != '-') {
-					dataOut.spxcmd = 'invokeFunction';
-					PlayoutWEB.webPlayoutController(dataOut);
-				} // if web
-				break;
-
-			default:
-				logger.warn('/gc/playout did not recognize command "' + playOutCommand + '".');
-				break;
-		}
-
-		// A play or stop replaces any pending API auto-out of this item or on
-		// these layers (see utils/spx_autoout.js).
-		if (playOutCommand == 'play' || playOutCommand == 'stop') {
-			let autoOutKeys = autoOut.layerKeys(dataOut);
-			if (itemID && templateIndex > -1) {
-				autoOutKeys.push(autoOut.itemKey(RundownFile, itemID));
-			}
-			autoOut.cancel(autoOutKeys);
-		}
-
-		// Added in 1.3.2 / updateRundownItem in the UI if set
-		if (req.body?.updateRundownItem?.updateUI) {
-			logger.verbose('API call: updateRundownItem in the UI.');
-			io.emit('SPXMessage2Client', {
-				spxcmd: 'updateRundownItem',
-				itemID: req.body.updateRundownItem.itemID,
-				relpath: dataOut.relpath,
-				command: playOutCommand
-			});
-		}
-
-		// Persist. The store entry is RundownData itself, so memory is already
-		// up to date; play and stop are also written to disk.
-		// Prepopulated playouts (no rundown item behind them) have no rundown data.
-		if (RundownData && RundownData.templates) {
-			RundownData.updated = new Date().toISOString();
-			await spx.appendProjectFile(RundownData, RundownFile, "from gc/playout");
-			if (playOutCommand == 'play' || playOutCommand == 'stop') {
-
-				if (req.body?.updateRundownItem?.persist) {
-					preventSave = false;
-				}
-
-				if (preventSave) {
-					logger.verbose('preventSave enabled, no need to persist to disk.');
-				} else {
-					logger.verbose('Persisting rundown data to disk....');
-					await spx.writeFile(RundownFile, RundownData);
-				}
-			}
-		}
-
-} // playoutLocked ended
-
-router.post('/gc/playout', spxAuth.CheckLogin, playout);
+router.post('/gc/playout', spxAuth.CheckLogin, async (req, res) => {
+	const result = await playoutService.playout(req.body);
+	res.status(result.status).send(result.body);
+});
 
 
 router.post('/gc/playaudio', spxAuth.CheckLogin, (req, res) => {
@@ -1954,7 +1562,7 @@ function addOgrafTemplateToProfile(profileData, TemplatePath, showFolder, curFol
 	if (relpath && relpath.match(/\/[^\/]+\.ograf\.json$/)) {
 		relpath = relpath.replace(/\/[^\/]+\.ograf\.json$/, '');
 	}
-	graphicPath = relpath + '/' + ografJson.main;
+	const graphicPath = relpath + '/' + ografJson.main;
 	SPXGCTemplateDefinition.ografProps.graphicPath = graphicPath;
 
 	if (profileData.templates) {
@@ -2169,24 +1777,6 @@ async function GetJsonData(fileref) {
 } // GetJsonData ended
 
 
-async function playoutSTOP(dataOut) {
-	logger.verbose('Stopping [' + dataOut.relpath + ']');
-	if (dataOut.playserver != '-') {
-		dataOut.command = "STOP";
-		logger.verbose('CasparCG stop: [' + dataOut.relpathCCG + '] ' + dataOut.playserver + '/' + dataOut.playchannel + '-' + dataOut.playlayer);
-		PlayoutCCG.playoutController(dataOut);
-	} else {
-		logger.verbose('No CasparCG playout');
-	}
-
-	if (dataOut.webplayout != '-') {
-		logger.verbose('Webplayout STOP: ' + dataOut.webplayout);
-		dataOut.spxcmd = 'stopTemplate';
-		PlayoutWEB.webPlayoutController(dataOut);
-	} else {
-		logger.verbose('No Webplayout playout');
-	}
-}  // playoutSTOP ended
 
 function getResolutionFromConfig(cfg, postRequest) {
 	let sizeID = cfg.general.resolution || 'HD';
@@ -2220,7 +1810,3 @@ function getResolutionFromConfig(cfg, postRequest) {
 
 
 module.exports = router;
-
-// The playout handler without the login check, for API routes that run
-// rundown items on the server (see /api/v1/controlRundownItemByID).
-module.exports.playout = playout;

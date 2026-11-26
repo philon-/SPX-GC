@@ -76,7 +76,6 @@ module.exports = {
 
                     cfg.casparcg                                = {}
                     cfg.casparcg.servers                        = []
-                    newcasparcg                                 = {}
 
                     // Experimental, WIP
                     cfg.osc                                     = {}

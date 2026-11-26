@@ -32,6 +32,7 @@ let ack2 = 'Sent request to SPX Controller. Acknowledgement is not to be expecte
 const apiHandler = require('../utils/api-handlers.js');
 const autoOut = require('../utils/spx_autoout.js');
 const rundownStore = require('../utils/rundown_store.js');
+const playoutService = require('../utils/playout_service.js');
 
 const notInSolo = {
 	status: 501,
@@ -592,7 +593,6 @@ router.get('/changeItemData', access.requireUiAccess, async (req, res) => {
 });
 
 
-
 // CONTROLLER API -----------------------------------------------------------------------------
 
 router.get('/item/play', api, async (req, res) => {
@@ -670,21 +670,6 @@ router.get('/rundown/focusByID/:id', api, async (req, res) => {
   io.emit('SPXMessage2Controller', dataOut);
   res.status(200).send('Sent request to controller: ' + JSON.stringify(dataOut));
 }); // end focusByID
-
-
-// router.get('/rundown/focusFirst/', api, async (req, res) => {
-// 	res.status(501).json(notInSolo);
-// }); // end focusFirst
-
-
-// router.get('/rundown/focusLast/', api, async (req, res) => {
-// 	res.status(501).json(notInSolo);
-// }); // end focusLast
-
-
-// router.get('/rundown/focusByID/:id', api, async (req, res) => {
-// 	res.status(501).json(notInSolo);
-// }); // end focusByID
 
 
 // Item commands by ID are executed by the open controller (spx_gc.js handles
@@ -1052,17 +1037,10 @@ router.post('/saveCustomJSON', api, async (req, res) => {
 }); // end saveCustomJSON
 
 
-// Runs the /gc/playout handler (without its login check) with the given
-// request body. Resolves with { status, body } of its response.
-async function runPlayout(body) {
-	let result = { status: 500, body: '' };
-	const playoutRes = {
-		status(code) { result.status = code; return this; },
-		send(data) { result.body = data || ''; return this; },
-	};
-	const { playout } = require('./routes-application.js'); // lazy: loaded after this file
-	await playout({ body: body }, playoutRes);
-	return result;
+// Runs a playout (the logic of /gc/playout) with the given request body.
+// Resolves with { status, body }.
+function runPlayout(body) {
+	return playoutService.playout(body);
 }
 
 

@@ -25,6 +25,8 @@
 * Security: random session secret per install (saved to `.spx_session_secret`, next to the app)
 * API: denied API calls answer **401** (was 200 with an `error` field; the field is still there). The API key can also be sent as an `X-API-Key` header. API keys are no longer written to the access log or sent to socket clients
 * Socket: messages relayed to renderers (`SPXWebRendererMessage`) need a logged-in session when login is on, and are refused from other sites when it is off
+* Fixes: playing an item could write another rundown's data into the rundown file when more than one rundown was in use (rundown state is now kept per file). Failed file writes are reported instead of leaving requests hanging, and files are written atomically. CasparCG connections reconnect by themselves after CasparCG restarts
+* Removed unused endpoints: `/CCG/control/:data` and `/CCG/controljson/:data` (failed on every command), `/api/licBasic` and `/api/rotBasic` (leftovers of the removed registration)
 
 
 # Published releases

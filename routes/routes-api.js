@@ -61,32 +61,6 @@ router.get('/openFileFolder/', ui, async (req, res) => {
 }); // openFileFolder of a template for editing
 
 
-router.get('/licBasic/', ui, async (req, res) => {
-  // added in 1.1.1 - license check. Minor tweaks in 1.1.3
-  // Format:
-  // 4x?rot(pmac)10x? | AA-AA-33-UQ-GZ-ZX-BB-BB-BB-BB
-  // Not safe because it is not encrypted.
-  let stripd = req.query.str.replace(/-/g, '');  // strip dashes
-  let rotlic = stripd.substring(4,12); // get 8 chars
-  // console.log('rotlic // from: ' + rotlic + ' to ' + spx.rot(rotlic, true) + ' vs ' + global.pmac.toUpperCase());
-  if (spx.rot(rotlic, true) === global.pmac.toUpperCase()) {
-    res.status(200).send('{result:ok}');
-  } else {
-    res.status(403).send('{result:invalid}');
-  }
-}); // GET licBasic check ended
-
-
-router.get('/rotBasic/', ui, async (req, res) => {
-  // Require host-id, returns key.
-  let rotlic = spx.rot(req.query.id);
-  let soclic = spx.dashify(spx.salt(4) + rotlic + spx.salt(8));
-  let revlic = spx.rot(rotlic, true);
-  let json = "{\"pmac\":\"" + global.pmac + "\",\"rot\":\"" + rotlic + "\",\"soclic\":\"" + soclic + "\",\"chk\":\"" + revlic + "\"}";
-  res.send(json);
-}); // GET rotBasic/?id=12345678
-
-
 // Minimalistic logger for template messages (GET query or POST body:
 // message, source, channel, level). Templates call this without a login.
 function logTemplateMessage(params, res) {
